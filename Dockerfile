@@ -23,9 +23,8 @@ RUN mkdir -p data
 ENV NODE_ENV=production
 ENV LOG_LEVEL=info
 
-# Run as non-root user with predictable UID (matches typical host user)
-RUN groupadd -g 1000 botuser && useradd -u 1000 -g botuser botuser
-RUN chown -R botuser:botuser /app
-USER botuser
+# Use existing 'node' user (UID 1000) from base image
+RUN chown -R node:node /app
+USER node
 
 CMD ["node", "src/index.js"]
