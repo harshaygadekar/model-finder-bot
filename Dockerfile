@@ -23,8 +23,8 @@ RUN mkdir -p data
 ENV NODE_ENV=production
 ENV LOG_LEVEL=info
 
-# Run as non-root user
-RUN groupadd -r botuser && useradd -r -g botuser botuser
+# Run as non-root user with predictable UID (matches typical host user)
+RUN groupadd -g 1000 botuser && useradd -u 1000 -g botuser botuser
 RUN chown -R botuser:botuser /app
 USER botuser
 
