@@ -15,6 +15,11 @@ const RELEASE_KEYWORDS = [
   'weights released', 'model weights',
   'new model', 'new version',
   'checkpoint', 'checkpoints',
+  // Hardware / product launches relevant to AI ecosystem
+  'new product', 'product launch',
+  'new chip', 'new processor', 'new gpu',
+  'apple intelligence', 'neural engine',
+  'apple silicon', 'macbook pro', 'mac studio',
 ];
 
 // Model-related terms — moderate signal

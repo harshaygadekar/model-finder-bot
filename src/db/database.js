@@ -63,7 +63,15 @@ function init() {
 
     CREATE INDEX IF NOT EXISTS idx_seen_items_discovered ON seen_items(discovered_at);
     CREATE INDEX IF NOT EXISTS idx_seen_items_source ON seen_items(source_type, source_name);
+    CREATE INDEX IF NOT EXISTS idx_seen_items_url ON seen_items(url);
     CREATE INDEX IF NOT EXISTS idx_papers_category ON papers(category, published_at);
+
+    CREATE TABLE IF NOT EXISTS arena_models (
+      name TEXT PRIMARY KEY,
+      organization TEXT,
+      first_seen TEXT DEFAULT (datetime('now')),
+      source TEXT DEFAULT 'leaderboard'
+    );
   `);
 
   return db;
@@ -84,6 +92,59 @@ function isItemSeen(url, title) {
   const id = hashItem(url, title);
   const row = db.prepare('SELECT id FROM seen_items WHERE id = ?').get(id);
   return !!row;
+}
+
+/**
+ * Check if a URL has already been seen (URL-only dedup safety net).
+ * Catches same article with minor title variations across polls.
+ */
+function isUrlSeen(url) {
+  if (!url) return false;
+  const normalized = url.trim().toLowerCase().replace(/\/+$/, '');
+  const row = db.prepare('SELECT id FROM seen_items WHERE LOWER(TRIM(url)) = ? LIMIT 1').get(normalized);
+  return !!row;
+}
+
+/**
+ * Check if a similar title was seen recently (cross-source content dedup).
+ * Prevents the same news story from being posted from multiple sources.
+ */
+function isContentSimilarSeen(title, hoursBack = 48) {
+  if (!title || title.length < 10) return false;
+
+  const normalize = (t) =>
+    (t || '').toLowerCase().replace(/[^a-z0-9\s\u4e00-\u9fff]/g, '').replace(/\s+/g, ' ').trim();
+
+  const needle = normalize(title);
+  if (needle.length < 8) return false;
+
+  const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+  const recent = db.prepare(
+    'SELECT title FROM seen_items WHERE discovered_at >= ? AND notified_at IS NOT NULL'
+  ).all(cutoff);
+
+  for (const row of recent) {
+    const hay = normalize(row.title);
+    if (!hay) continue;
+
+    // Token overlap ratio (Jaccard-like similarity)
+    const needleTokens = new Set(needle.split(' ').filter(t => t.length > 2));
+    const hayTokens = new Set(hay.split(' ').filter(t => t.length > 2));
+    if (needleTokens.size === 0 || hayTokens.size === 0) continue;
+
+    const intersection = [...needleTokens].filter(t => hayTokens.has(t)).length;
+    const union = new Set([...needleTokens, ...hayTokens]).size;
+    if (union > 0 && intersection / union > 0.6) return true;
+
+    // Substring containment for CJK text (Chinese chars don't use spaces)
+    if (needle.length > 15 && hay.length > 15) {
+      const needleSub = needle.substring(0, Math.min(needle.length, 20));
+      const haySub = hay.substring(0, Math.min(hay.length, 20));
+      if (needle.includes(haySub) || hay.includes(needleSub)) return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -192,6 +253,31 @@ function savePaper(paper) {
   return id;
 }
 
+// ─── Arena Model Persistence ─────────────────────────────────────────────────
+
+/**
+ * Get all known arena models from the database.
+ */
+function getKnownArenaModels() {
+  return db.prepare('SELECT name, organization, first_seen FROM arena_models').all();
+}
+
+/**
+ * Add a new arena model to the database.
+ */
+function addArenaModel(name, organization, source = 'leaderboard') {
+  db.prepare('INSERT OR IGNORE INTO arena_models (name, organization, source) VALUES (?, ?, ?)')
+    .run(name, organization || 'Unknown', source);
+}
+
+/**
+ * Check if an arena model is already known.
+ */
+function isArenaModelKnown(name) {
+  const row = db.prepare('SELECT name FROM arena_models WHERE name = ?').get(name);
+  return !!row;
+}
+
 /**
  * Get papers from the last N days that haven't been included in a digest yet.
  */
@@ -235,6 +321,8 @@ module.exports = {
   init,
   hashItem,
   isItemSeen,
+  isUrlSeen,
+  isContentSimilarSeen,
   markSeen,
   getRecentItems,
   updateSourceStatus,
@@ -242,6 +330,9 @@ module.exports = {
   getStats,
   isSourceNew,
   savePaper,
+  getKnownArenaModels,
+  addArenaModel,
+  isArenaModelKnown,
   getWeeklyPapers,
   markPapersDigested,
   getWeeklyNotified,

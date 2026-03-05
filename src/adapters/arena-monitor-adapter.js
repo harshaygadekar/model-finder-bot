@@ -1,6 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
+const db = require('../db/database');
 const logger = require('../services/logger');
 
 /**
@@ -29,6 +30,8 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // Cloned from leaderboard-adapter.js for self-contained mystery detection
 const MYSTERY_PATTERNS = [
   /^[a-z]+-[a-z]+-[a-z]+$/,           // e.g., sus-column-r
+  /^[a-z]+-[a-z]+$/,                  // e.g., two-word codenames
+  /^[a-z]{4,25}$/,                     // e.g., galapagos (single lowercase word)
   /^im-[a-z]+-[a-z]+/,                // e.g., im-mostly-a-good-chatbot
   /^anon[-_]/i,                        // anonymous models
   /^mystery/i,                         // explicit mystery
@@ -37,6 +40,7 @@ const MYSTERY_PATTERNS = [
   /^chatbot[-_]\d/i,                   // chatbot-001 style
   /^test[-_]model/i,                   // test model names
   /^arena[-_]/i,                       // arena-specific test models
+  /^[a-z]+\d+$/i,                      // word+number like "titan7"
 ];
 
 const KNOWN_PREFIXES = [
@@ -44,14 +48,34 @@ const KNOWN_PREFIXES = [
   'deepseek-', 'qwen-', 'qwen2', 'phi-', 'glm-', 'yi-', 'gemma-', 'command-',
   'grok-', 'palm-', 'o1-', 'o3-', 'o4-', 'cohere-', 'nvidia-',
   'meta-', 'google-', 'anthropic-', 'seed-', 'ernie-', 'kimi-',
-  'step-', 'minimax-', 'doubao-', 'abab-',
+  'step-', 'minimax-', 'doubao-', 'abab-', 'stable-', 'flux-',
+  'dall-', 'whisper-', 'codestral-', 'internlm-', 'internvl-',
+  'cogvlm-', 'cogvideo-', 'skywork-', 'hunyuan-', 'megrez-',
+  'baichuan-', 'jamba-', 'dbrx-', 'arctic-', 'nemotron-',
+  'wizardlm-', 'solar-', 'reka-', 'aya-',
 ];
+
+// Known model family regex — recognize established naming conventions
+const KNOWN_FAMILY_PATTERN = /^(gpt|claude|gemini|llama|mistral|mixtral|deepseek|qwen|phi|glm|yi|gemma|command|grok|palm|cohere|nvidia|meta|google|anthropic|seed|ernie|kimi|step|minimax|doubao|abab|stable|flux|dall|whisper|codestral|internlm|internvl|cogvlm|cogvideo|skywork|hunyuan|megrez|baichuan|jamba|dbrx|arctic|nemotron|wizardlm|solar|reka|aya|o[134])([\-_.\s\/]|$)/i;
 
 function isMysteryModel(name) {
   if (!name) return false;
   const lower = name.toLowerCase().trim();
+
+  // If it matches a known model family prefix, it's NOT mystery
   if (KNOWN_PREFIXES.some(p => lower.startsWith(p))) return false;
-  return MYSTERY_PATTERNS.some(p => p.test(lower));
+  if (KNOWN_FAMILY_PATTERN.test(lower)) return false;
+
+  // If it matches explicit mystery patterns, it IS mystery
+  if (MYSTERY_PATTERNS.some(p => p.test(lower))) return true;
+
+  // Fallback: any short name not matching known families is treated as potential mystery
+  // Catches single-word codenames like "galapagos", "strawberry", "orion"
+  if (lower.length >= 3 && lower.length <= 30 && /^[a-z0-9][-a-z0-9_.]*$/.test(lower)) {
+    return true;
+  }
+
+  return false;
 }
 
 class ArenaMonitorAdapter extends BaseAdapter {
@@ -59,13 +83,54 @@ class ArenaMonitorAdapter extends BaseAdapter {
     super('Arena Model Monitor', 'arena-models', 1); // P1 — new Arena models are significant
     this.knownModels = new Map(); // modelName → { organization, firstSeen }
     this.initialized = false;
+    this._dbLoaded = false;
+  }
+
+  /**
+   * Load persisted arena models from database (survives bot restarts).
+   */
+  _loadFromDb() {
+    if (this._dbLoaded) return;
+    try {
+      const rows = db.getKnownArenaModels();
+      for (const row of rows) {
+        this.knownModels.set(row.name, { organization: row.organization, firstSeen: new Date(row.first_seen) });
+      }
+      if (this.knownModels.size > 0) {
+        this.initialized = true;
+        logger.info(`[Arena Monitor] Loaded ${this.knownModels.size} known models from database`);
+      }
+      this._dbLoaded = true;
+    } catch (e) {
+      logger.debug(`[Arena Monitor] Could not load from DB: ${e.message}`);
+    }
   }
 
   async check() {
     const items = [];
 
+    // Load persisted models from database on first check
+    if (!this._dbLoaded) {
+      this._loadFromDb();
+    }
+
     try {
-      const models = await this._extractArenaModels();
+      // Extract models from both leaderboard AND battle mode pages
+      const [leaderboardResult, battleResult] = await Promise.allSettled([
+        this._extractArenaModels(),
+        this._extractBattleModeModels(),
+      ]);
+      const allModels = [
+        ...(leaderboardResult.status === 'fulfilled' ? leaderboardResult.value : []),
+        ...(battleResult.status === 'fulfilled' ? battleResult.value : []),
+      ];
+      // Deduplicate by name
+      const seenNames = new Set();
+      const models = allModels.filter(m => {
+        if (seenNames.has(m.name)) return false;
+        seenNames.add(m.name);
+        return true;
+      });
 
       if (models.length === 0) {
         logger.debug('[Arena Monitor] No models extracted from RSC payload');
@@ -76,6 +141,7 @@ class ArenaMonitorAdapter extends BaseAdapter {
       if (!this.initialized) {
         for (const m of models) {
           this.knownModels.set(m.name, { organization: m.organization, firstSeen: new Date() });
+          db.addArenaModel(m.name, m.organization, 'leaderboard');
         }
         this.initialized = true;
         logger.info(`[Arena Monitor] Seeded ${models.length} models from ${new Set(models.map(m => m.organization)).size} organizations`);
@@ -85,9 +151,11 @@ class ArenaMonitorAdapter extends BaseAdapter {
       // Detect NEW models
       for (const m of models) {
         if (this.knownModels.has(m.name)) continue;
+        if (db.isArenaModelKnown(m.name)) { this.knownModels.set(m.name, { organization: m.organization, firstSeen: new Date() }); continue; }
 
         // New model found!
         this.knownModels.set(m.name, { organization: m.organization, firstSeen: new Date() });
+        db.addArenaModel(m.name, m.organization, 'leaderboard');
 
         const mystery = isMysteryModel(m.name);
         const emoji = mystery ? '🔮' : '🏟️';
@@ -247,6 +315,83 @@ class ArenaMonitorAdapter extends BaseAdapter {
 
     logger.debug(`[Arena Monitor] Extracted ${models.length} models from Arena leaderboard`);
     return models;
+  }
+
+  /**
+   * Extract model names from Arena's Battle Mode / main page.
+   * Battle mode may list models not yet on the leaderboard.
+   */
+  async _extractBattleModeModels() {
+    try {
+      const response = await axios.get('https://lmarena.ai/', {
+        timeout: 30000,
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+        },
+        maxRedirects: 5,
+      });
+
+      const html = response.data;
+      if (typeof html !== 'string') return [];
+
+      const models = [];
+      const seenNames = new Set();
+
+      // Extract from RSC payload chunks (same technique as leaderboard)
+      const rscPattern = /self\.__next_f\.push\(\[1,"(.+?)"\]\)/gs;
+      let match;
+      while ((match = rscPattern.exec(html)) !== null) {
+        try {
+          const raw = match[1]
+            .replace(/\\n/g, '\n')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\')
+            .replace(/\\t/g, '\t')
+            .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+
+          // Look for model name-organization pairs
+          const nameOrgPattern = /"name"\s*:\s*"([^"]+)"\s*,\s*"organization"\s*:\s*"([^"]+)"/g;
+          let m;
+          while ((m = nameOrgPattern.exec(raw)) !== null) {
+            const name = m[1].trim();
+            const organization = m[2].trim();
+            if (name && !seenNames.has(name)) {
+              seenNames.add(name);
+              models.push({ name, organization });
+            }
+          }
+          const orgNamePattern = /"organization"\s*:\s*"([^"]+)"\s*,\s*"name"\s*:\s*"([^"]+)"/g;
+          while ((m = orgNamePattern.exec(raw)) !== null) {
+            const name = m[2].trim();
+            const organization = m[1].trim();
+            if (name && !seenNames.has(name)) {
+              seenNames.add(name);
+              models.push({ name, organization });
+            }
+          }
+
+          // Also look for model IDs in dropdown/selector-like structures
+          const modelListPattern = /"model(?:_name|Id|_id)?"\s*:\s*"([^"]{3,60})"/g;
+          while ((m = modelListPattern.exec(raw)) !== null) {
+            const name = m[1].trim();
+            if (name && !seenNames.has(name) && !name.includes('/') && !name.includes('\\')) {
+              seenNames.add(name);
+              models.push({ name, organization: 'Unknown' });
+            }
+          }
+        } catch {
+          // Skip malformed chunks
+        }
+      }
+
+      logger.debug(`[Arena Monitor] Extracted ${models.length} models from battle mode page`);
+      return models;
+    } catch (error) {
+      logger.debug(`[Arena Monitor] Battle mode scrape failed: ${error.message}`);
+      return [];
+    }
   }
 }
 

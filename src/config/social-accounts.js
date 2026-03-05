@@ -59,6 +59,32 @@ const NEWSLETTER_RSS_SOURCES = [
     priority: 2,
     translate: false,
   },
+
+  // ─── Fast-updating Tech News (for breaking product launches) ─────────────
+  {
+    name: 'TechCrunch',
+    url: 'https://techcrunch.com/feed/',
+    priority: 2,
+    translate: false,
+  },
+  {
+    name: 'The Verge',
+    url: 'https://www.theverge.com/rss/index.xml',
+    priority: 2,
+    translate: false,
+  },
+  {
+    name: 'Ars Technica',
+    url: 'https://feeds.arstechnica.com/arstechnica/technology-lab',
+    priority: 2,
+    translate: false,
+  },
+  {
+    name: '9to5Mac',
+    url: 'https://9to5mac.com/feed/',
+    priority: 2,
+    translate: false,
+  },
 ];
 
 module.exports = { BLUESKY_SOURCES, NEWSLETTER_RSS_SOURCES };

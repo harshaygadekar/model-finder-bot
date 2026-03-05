@@ -49,6 +49,9 @@ const RSS_SOURCES = [
   { name: 'Google DeepMind Blog',      url: 'https://deepmind.google/blog/rss.xml',                                                                                                                   priority: PRIORITY.P0, translate: false },
   // Meta AI blog RSS URL changed — using research blog instead
   { name: 'Meta Research Blog',        url: 'https://research.facebook.com/feed/',                                                                                                                     priority: PRIORITY.P0, translate: false },
+  // Apple
+  { name: 'Apple Newsroom',            url: 'https://www.apple.com/newsroom/rss-feed.rss',                                                                                                              priority: PRIORITY.P0, translate: false },
+  { name: 'Apple Machine Learning',    url: 'https://machinelearning.apple.com/rss.xml',                                                                                                                priority: PRIORITY.P0, translate: false },
 
   // Chinese Labs
   // DeepSeek blog has no public RSS — monitored via GitHub releases instead
@@ -608,16 +611,16 @@ const INTERVALS = {
   REDDIT: '*/3 * * * *',     // Every 3 minutes
   OLLAMA: '*/10 * * * *',    // Every 10 minutes
   BLUESKY: '*/10 * * * *',   // Every 10 minutes for Bluesky feeds
-  SCRAPE: '*/15 * * * *',    // Every 15 minutes to avoid rate limits
-  NEWSLETTER: '*/10 * * * *',// Every 10 minutes for newsletter feeds
+  SCRAPE: '*/10 * * * *',    // Every 10 minutes (was 15, faster for breaking news)
+  NEWSLETTER: '*/5 * * * *', // Every 5 minutes (was 10, faster for breaking news)
   LEADERBOARD: '0 * * * *',  // Every hour for benchmarks
   SDK: '0 */6 * * *',        // Every 6 hours for SDK version checks
-  ARENA: '0 */4 * * *',      // Every 4 hours for mystery model checks
+  ARENA: '0 */2 * * *',      // Every 2 hours for mystery model checks
   TALENT: '0 8 * * *',       // Daily at 8 AM for talent movement
   API_MODELS: '*/2 * * * *',  // Every 2 minutes — fastest detection for live models
-  ARENA_MONITOR: '0 */2 * * *', // Every 2 hours — Arena leaderboard RSC extraction
-  CHANGELOG: '0 */3 * * *',   // Every 3 hours — API changelog monitoring
-  PLAYGROUND: '0 */4 * * *',  // Every 4 hours — frontend/playground scraping
+  ARENA_MONITOR: '*/30 * * * *', // Every 30 minutes (was 2h, faster stealth model detection)
+  CHANGELOG: '0 */2 * * *',   // Every 2 hours (was 3h)
+  PLAYGROUND: '0 */2 * * *',  // Every 2 hours (was 4h)
 };
 
 module.exports = {

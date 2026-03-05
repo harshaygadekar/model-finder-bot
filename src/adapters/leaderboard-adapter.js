@@ -8,6 +8,8 @@ const { ARENA_SOURCES } = require('../config/sources');
 // Patterns that indicate a model is deliberately anonymized/mystery
 const MYSTERY_PATTERNS = [
   /^[a-z]+-[a-z]+-[a-z]+$/,           // e.g., sus-column-r
+  /^[a-z]+-[a-z]+$/,                  // e.g., two-word codenames
+  /^[a-z]{4,25}$/,                     // e.g., galapagos (single lowercase word)
   /^im-[a-z]+-[a-z]+/,                // e.g., im-mostly-a-good-chatbot
   /^anon[-_]/i,                        // anonymous models
   /^mystery/i,                         // explicit mystery
@@ -16,6 +18,7 @@ const MYSTERY_PATTERNS = [
   /^chatbot[-_]\d/i,                   // chatbot-001 style
   /^test[-_]model/i,                   // test model names
   /^arena[-_]/i,                       // arena-specific test models
+  /^[a-z]+\d+$/i,                      // word+number like "titan7"
 ];
 
 // Known model prefixes to EXCLUDE from mystery detection
@@ -23,18 +26,34 @@ const KNOWN_PREFIXES = [
   'gpt-', 'claude-', 'gemini-', 'llama-', 'mistral-', 'mixtral-',
   'deepseek-', 'qwen-', 'phi-', 'glm-', 'yi-', 'gemma-', 'command-',
   'grok-', 'palm-', 'o1-', 'o3-', 'o4-', 'cohere-', 'nvidia-',
-  'meta-', 'google-', 'anthropic-',
+  'meta-', 'google-', 'anthropic-', 'seed-', 'ernie-', 'kimi-',
+  'step-', 'minimax-', 'doubao-', 'abab-', 'stable-', 'flux-',
+  'dall-', 'whisper-', 'codestral-', 'internlm-', 'internvl-',
+  'cogvlm-', 'cogvideo-', 'skywork-', 'hunyuan-', 'megrez-',
+  'baichuan-', 'jamba-', 'dbrx-', 'arctic-', 'nemotron-',
+  'wizardlm-', 'solar-', 'reka-', 'aya-',
 ];
+
+// Known model family regex — recognize established naming conventions
+const KNOWN_FAMILY_PATTERN = /^(gpt|claude|gemini|llama|mistral|mixtral|deepseek|qwen|phi|glm|yi|gemma|command|grok|palm|cohere|nvidia|meta|google|anthropic|seed|ernie|kimi|step|minimax|doubao|abab|stable|flux|dall|whisper|codestral|internlm|internvl|cogvlm|cogvideo|skywork|hunyuan|megrez|baichuan|jamba|dbrx|arctic|nemotron|wizardlm|solar|reka|aya|o[134])([\-_.\s\/]|$)/i;
 
 function isMysteryModel(modelName) {
   if (!modelName) return false;
   const lower = modelName.toLowerCase().trim();
-  
-  // Skip known model families
+
+  // If it matches a known model family prefix, it's NOT mystery
   if (KNOWN_PREFIXES.some(prefix => lower.startsWith(prefix))) return false;
-  
-  // Check mystery patterns
-  return MYSTERY_PATTERNS.some(pattern => pattern.test(lower));
+  if (KNOWN_FAMILY_PATTERN.test(lower)) return false;
+
+  // If it matches explicit mystery patterns, it IS mystery
+  if (MYSTERY_PATTERNS.some(pattern => pattern.test(lower))) return true;
+
+  // Fallback: any short name not matching known families is treated as potential mystery
+  if (lower.length >= 3 && lower.length <= 30 && /^[a-z0-9][-a-z0-9_.]*$/.test(lower)) {
+    return true;
+  }
+
+  return false;
 }
 
 class LeaderboardAdapter extends BaseAdapter {

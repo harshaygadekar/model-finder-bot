@@ -60,8 +60,13 @@ async function notifyItems(items, sourceName) {
 
   for (const item of items) {
     try {
-      // Check dedup
+      // ── Triple-layer dedup (all checks use ORIGINAL pre-translation title) ──
+      // Layer 1: Exact hash match (url + title)
       if (db.isItemSeen(item.url, item.title)) continue;
+      // Layer 2: URL-only match (catches same article with minor title changes)
+      if (db.isUrlSeen(item.url)) continue;
+      // Layer 3: Content similarity (catches same story from different sources)
+      if (db.isContentSimilarSeen(item.title)) continue;
 
       // Freshness gate: silently mark old items as seen without notifying
       if (!isFresh(item)) {
@@ -69,6 +74,10 @@ async function notifyItems(items, sourceName) {
         skippedOld++;
         continue;
       }
+
+      // Save original identifiers BEFORE translation so dedup always matches
+      const originalUrl = item.url;
+      const originalTitle = item.title;
 
       // Translate if needed
       const processedItem = await translateItem(item);
@@ -81,25 +90,24 @@ async function notifyItems(items, sourceName) {
 
       if (!channel && (!isItemRumor || !rumorChannel)) {
         logger.warn(`[Notifier] No destination channels found, skipping: ${processedItem.title}`);
-        db.markSeen(processedItem, false);
+        db.markSeen({ ...processedItem, url: originalUrl, title: originalTitle }, false);
         continue;
       }
 
       // Build and send embed
       const message = buildNotificationEmbed(processedItem);
-      
-      if (channel && channelKey !== 'rumors-leaks') {
+
+      // Send to ONE channel only — rumors to #rumors-leaks, everything else to mapped channel
+      if (isItemRumor && rumorChannel) {
+        await rumorChannel.send({ content: '🚨 **RUMOR/LEAK DETECTED** 🚨', embeds: message.embeds });
+        logger.info(`[Notifier] 🔮 Sent RUMOR to #rumors-leaks: "${processedItem.title.substring(0, 60)}..."`);
+      } else if (channel) {
         await channel.send(message);
         logger.info(`[Notifier] 📨 Sent to #${channelKey}: "${processedItem.title.substring(0, 60)}..."`);
       }
 
-      // Send to rumors channel if it's a rumor (with special alert header)
-      if (isItemRumor && rumorChannel) {
-        await rumorChannel.send({ content: '🚨 **RUMOR/LEAK DETECTED** 🚨', embeds: message.embeds });
-        logger.info(`[Notifier] 🔮 Sent RUMOR to #rumors-leaks: "${processedItem.title.substring(0, 60)}..."`);
-      }
-
-      db.markSeen(processedItem, true);
+      // Mark seen with ORIGINAL title/url so future dedup checks always match
+      db.markSeen({ ...processedItem, url: originalUrl, title: originalTitle }, true);
       notifiedCount++;
 
       // Small delay between messages to avoid Discord rate limiting
