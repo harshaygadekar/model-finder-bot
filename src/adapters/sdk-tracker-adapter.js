@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 const { SDK_SOURCES } = require('../config/sources');
@@ -19,9 +19,12 @@ class SDKTrackerAdapter extends BaseAdapter {
   constructor() {
     super('SDK Supply Chain Tracker', 'sdk-tracker', 1); // P1 — these are significant signals
     this.lastSeenVersions = {}; // { 'openai-npm': '4.73.0', ... }
+    this._stateLoaded = false;
   }
 
   async check() {
+    this._ensureStateLoaded();
+
     const items = [];
 
     // Check NPM packages
@@ -55,7 +58,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     const versionKey = `${pkg.name}-npm`;
 
     // Fetch latest version metadata from NPM registry
-    const response = await axios.get(pkg.url, {
+    const response = await http.get(pkg.url, {
       timeout: 10000,
       headers: { Accept: 'application/json' },
     });
@@ -66,6 +69,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     // First run: just store the version
     if (!this.lastSeenVersions[versionKey]) {
       this.lastSeenVersions[versionKey] = latestVersion;
+      this._persistState();
       logger.info(`[SDK Tracker] Initialized ${pkg.name} NPM at v${latestVersion}`);
       return items;
     }
@@ -76,6 +80,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     // New version detected!
     const oldVersion = this.lastSeenVersions[versionKey];
     this.lastSeenVersions[versionKey] = latestVersion;
+    this._persistState();
     logger.info(`[SDK Tracker] 🆕 ${pkg.name} NPM: ${oldVersion} → ${latestVersion}`);
 
     // Always report the new version
@@ -121,7 +126,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     const items = [];
     const versionKey = `${pkg.name}-pypi`;
 
-    const response = await axios.get(pkg.url, {
+    const response = await http.get(pkg.url, {
       timeout: 10000,
       headers: { Accept: 'application/json' },
     });
@@ -132,6 +137,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     // First run: just store the version
     if (!this.lastSeenVersions[versionKey]) {
       this.lastSeenVersions[versionKey] = latestVersion;
+      this._persistState();
       logger.info(`[SDK Tracker] Initialized ${pkg.name} PyPI at v${latestVersion}`);
       return items;
     }
@@ -142,6 +148,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     // New version detected!
     const oldVersion = this.lastSeenVersions[versionKey];
     this.lastSeenVersions[versionKey] = latestVersion;
+    this._persistState();
     logger.info(`[SDK Tracker] 🆕 ${pkg.name} PyPI: ${oldVersion} → ${latestVersion}`);
 
     items.push({
@@ -195,7 +202,7 @@ class SDKTrackerAdapter extends BaseAdapter {
 
     for (const url of inspectUrls) {
       try {
-        const response = await axios.get(url, { timeout: 10000 });
+        const response = await http.get(url, { timeout: 10000 });
         const source = response.data;
         if (typeof source !== 'string') continue;
 
@@ -238,7 +245,7 @@ class SDKTrackerAdapter extends BaseAdapter {
     for (const filePath of filePaths) {
       try {
         const url = `https://raw.githubusercontent.com/${repo}/v${version}/${filePath}`;
-        const response = await axios.get(url, { headers, timeout: 10000 });
+        const response = await http.get(url, { headers, timeout: 10000 });
         const source = response.data;
         if (typeof source !== 'string') continue;
 
@@ -279,6 +286,19 @@ class SDKTrackerAdapter extends BaseAdapter {
       if (modelName.startsWith(known)) return true;
     }
     return false;
+  }
+
+  _ensureStateLoaded() {
+    if (this._stateLoaded) return;
+    const persisted = this.loadState('last-seen-versions', {});
+    if (persisted && typeof persisted === 'object') {
+      this.lastSeenVersions = persisted;
+    }
+    this._stateLoaded = true;
+  }
+
+  _persistState() {
+    this.saveState('last-seen-versions', this.lastSeenVersions);
   }
 }
 

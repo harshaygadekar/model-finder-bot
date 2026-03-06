@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 const { RESEARCHERS, AFFILIATION_PATTERNS } = require('../config/researchers');
@@ -36,8 +36,8 @@ class TalentAdapter extends BaseAdapter {
           items.push(...githubItems);
         }
 
-        // Rate limit: wait 1s between researchers to respect ArXiv's 3s request gap policy
-        await sleep(1000);
+        // Small spacing between researchers; ArXiv requests themselves are centrally paced.
+        await sleep(250);
       } catch (error) {
         logger.warn(`[Talent] Failed to check ${researcher.name}: ${error.message}`);
       }
@@ -53,10 +53,13 @@ class TalentAdapter extends BaseAdapter {
     const items = [];
 
     try {
-      const query = encodeURIComponent(researcher.arxivQuery);
-      const url = `http://export.arxiv.org/api/query?search_query=${query}&sortBy=submittedDate&sortOrder=descending&max_results=3`;
-
-      const response = await axios.get(url, {
+      const response = await http.getArxiv('https://export.arxiv.org/api/query', {
+        params: {
+          search_query: researcher.arxivQuery,
+          sortBy: 'submittedDate',
+          sortOrder: 'descending',
+          max_results: 3,
+        },
         timeout: 15000,
         headers: { 'User-Agent': 'ModelLookerBot/1.0' },
       });
@@ -124,7 +127,7 @@ class TalentAdapter extends BaseAdapter {
         headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
       }
 
-      const response = await axios.get(`https://api.github.com/users/${researcher.github}/orgs`, {
+      const response = await http.get(`https://api.github.com/users/${researcher.github}/orgs`, {
         headers,
         timeout: 10000,
       });

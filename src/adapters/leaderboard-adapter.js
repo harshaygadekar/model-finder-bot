@@ -1,60 +1,9 @@
-const axios = require('axios');
+const http = require('../services/http');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 const { ARENA_SOURCES } = require('../config/sources');
-
-// ─── Mystery Model Detection ─────────────────────────────────────────────────
-// Patterns that indicate a model is deliberately anonymized/mystery
-const MYSTERY_PATTERNS = [
-  /^[a-z]+-[a-z]+-[a-z]+$/,           // e.g., sus-column-r
-  /^[a-z]+-[a-z]+$/,                  // e.g., two-word codenames
-  /^[a-z]{4,25}$/,                     // e.g., galapagos (single lowercase word)
-  /^im-[a-z]+-[a-z]+/,                // e.g., im-mostly-a-good-chatbot
-  /^anon[-_]/i,                        // anonymous models
-  /^mystery/i,                         // explicit mystery
-  /^model[-_]\d+$/i,                   // generic numbered models
-  /^[a-f0-9]{8,}$/,                    // hash-named models
-  /^chatbot[-_]\d/i,                   // chatbot-001 style
-  /^test[-_]model/i,                   // test model names
-  /^arena[-_]/i,                       // arena-specific test models
-  /^[a-z]+\d+$/i,                      // word+number like "titan7"
-];
-
-// Known model prefixes to EXCLUDE from mystery detection
-const KNOWN_PREFIXES = [
-  'gpt-', 'claude-', 'gemini-', 'llama-', 'mistral-', 'mixtral-',
-  'deepseek-', 'qwen-', 'phi-', 'glm-', 'yi-', 'gemma-', 'command-',
-  'grok-', 'palm-', 'o1-', 'o3-', 'o4-', 'cohere-', 'nvidia-',
-  'meta-', 'google-', 'anthropic-', 'seed-', 'ernie-', 'kimi-',
-  'step-', 'minimax-', 'doubao-', 'abab-', 'stable-', 'flux-',
-  'dall-', 'whisper-', 'codestral-', 'internlm-', 'internvl-',
-  'cogvlm-', 'cogvideo-', 'skywork-', 'hunyuan-', 'megrez-',
-  'baichuan-', 'jamba-', 'dbrx-', 'arctic-', 'nemotron-',
-  'wizardlm-', 'solar-', 'reka-', 'aya-',
-];
-
-// Known model family regex — recognize established naming conventions
-const KNOWN_FAMILY_PATTERN = /^(gpt|claude|gemini|llama|mistral|mixtral|deepseek|qwen|phi|glm|yi|gemma|command|grok|palm|cohere|nvidia|meta|google|anthropic|seed|ernie|kimi|step|minimax|doubao|abab|stable|flux|dall|whisper|codestral|internlm|internvl|cogvlm|cogvideo|skywork|hunyuan|megrez|baichuan|jamba|dbrx|arctic|nemotron|wizardlm|solar|reka|aya|o[134])([\-_.\s\/]|$)/i;
-
-function isMysteryModel(modelName) {
-  if (!modelName) return false;
-  const lower = modelName.toLowerCase().trim();
-
-  // If it matches a known model family prefix, it's NOT mystery
-  if (KNOWN_PREFIXES.some(prefix => lower.startsWith(prefix))) return false;
-  if (KNOWN_FAMILY_PATTERN.test(lower)) return false;
-
-  // If it matches explicit mystery patterns, it IS mystery
-  if (MYSTERY_PATTERNS.some(pattern => pattern.test(lower))) return true;
-
-  // Fallback: any short name not matching known families is treated as potential mystery
-  if (lower.length >= 3 && lower.length <= 30 && /^[a-z0-9][-a-z0-9_.]*$/.test(lower)) {
-    return true;
-  }
-
-  return false;
-}
+const { isMysteryModel } = require('../utils/mystery-detector');
 
 class LeaderboardAdapter extends BaseAdapter {
   constructor(config = {}) {
@@ -111,7 +60,7 @@ class LeaderboardAdapter extends BaseAdapter {
           continue;
         }
 
-        const response = await axios.get(source.url, { timeout: 10000 });
+        const response = await http.get(source.url, { timeout: 10000 });
         const parsedItems = source.parser(response.data);
         
         parsedItems.forEach(item => {
@@ -148,7 +97,7 @@ class LeaderboardAdapter extends BaseAdapter {
   async _scrapeHTMLLeaderboard(source) {
     const items = [];
     try {
-      const response = await axios.get(source.url, {
+      const response = await http.get(source.url, {
         timeout: 15000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -209,7 +158,7 @@ class LeaderboardAdapter extends BaseAdapter {
         // Use HF space API (primary method) since GCS datasetUrl returns 403
         let models = [];
         try {
-          const hfResponse = await axios.get(arena.url, { timeout: 15000 });
+          const hfResponse = await http.get(arena.url, { timeout: 15000 });
           const hfData = hfResponse.data;
           if (hfData && hfData.models) {
             models = hfData.models;

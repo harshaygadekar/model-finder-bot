@@ -1,8 +1,8 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const db = require('../db/database');
 const logger = require('../services/logger');
+const { isMysteryModel } = require('../utils/mystery-detector');
 
 /**
  * Arena Model Monitor — extracts model data from LM Arena's React Server
@@ -25,58 +25,6 @@ const logger = require('../services/logger');
  */
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-
-// ─── Mystery Model Detection ─────────────────────────────────────────────────
-// Cloned from leaderboard-adapter.js for self-contained mystery detection
-const MYSTERY_PATTERNS = [
-  /^[a-z]+-[a-z]+-[a-z]+$/,           // e.g., sus-column-r
-  /^[a-z]+-[a-z]+$/,                  // e.g., two-word codenames
-  /^[a-z]{4,25}$/,                     // e.g., galapagos (single lowercase word)
-  /^im-[a-z]+-[a-z]+/,                // e.g., im-mostly-a-good-chatbot
-  /^anon[-_]/i,                        // anonymous models
-  /^mystery/i,                         // explicit mystery
-  /^model[-_]\d+$/i,                   // generic numbered models
-  /^[a-f0-9]{8,}$/,                    // hash-named models
-  /^chatbot[-_]\d/i,                   // chatbot-001 style
-  /^test[-_]model/i,                   // test model names
-  /^arena[-_]/i,                       // arena-specific test models
-  /^[a-z]+\d+$/i,                      // word+number like "titan7"
-];
-
-const KNOWN_PREFIXES = [
-  'gpt-', 'claude-', 'gemini-', 'llama-', 'mistral-', 'mixtral-',
-  'deepseek-', 'qwen-', 'qwen2', 'phi-', 'glm-', 'yi-', 'gemma-', 'command-',
-  'grok-', 'palm-', 'o1-', 'o3-', 'o4-', 'cohere-', 'nvidia-',
-  'meta-', 'google-', 'anthropic-', 'seed-', 'ernie-', 'kimi-',
-  'step-', 'minimax-', 'doubao-', 'abab-', 'stable-', 'flux-',
-  'dall-', 'whisper-', 'codestral-', 'internlm-', 'internvl-',
-  'cogvlm-', 'cogvideo-', 'skywork-', 'hunyuan-', 'megrez-',
-  'baichuan-', 'jamba-', 'dbrx-', 'arctic-', 'nemotron-',
-  'wizardlm-', 'solar-', 'reka-', 'aya-',
-];
-
-// Known model family regex — recognize established naming conventions
-const KNOWN_FAMILY_PATTERN = /^(gpt|claude|gemini|llama|mistral|mixtral|deepseek|qwen|phi|glm|yi|gemma|command|grok|palm|cohere|nvidia|meta|google|anthropic|seed|ernie|kimi|step|minimax|doubao|abab|stable|flux|dall|whisper|codestral|internlm|internvl|cogvlm|cogvideo|skywork|hunyuan|megrez|baichuan|jamba|dbrx|arctic|nemotron|wizardlm|solar|reka|aya|o[134])([\-_.\s\/]|$)/i;
-
-function isMysteryModel(name) {
-  if (!name) return false;
-  const lower = name.toLowerCase().trim();
-
-  // If it matches a known model family prefix, it's NOT mystery
-  if (KNOWN_PREFIXES.some(p => lower.startsWith(p))) return false;
-  if (KNOWN_FAMILY_PATTERN.test(lower)) return false;
-
-  // If it matches explicit mystery patterns, it IS mystery
-  if (MYSTERY_PATTERNS.some(p => p.test(lower))) return true;
-
-  // Fallback: any short name not matching known families is treated as potential mystery
-  // Catches single-word codenames like "galapagos", "strawberry", "orion"
-  if (lower.length >= 3 && lower.length <= 30 && /^[a-z0-9][-a-z0-9_.]*$/.test(lower)) {
-    return true;
-  }
-
-  return false;
-}
 
 class ArenaMonitorAdapter extends BaseAdapter {
   constructor() {
@@ -217,7 +165,7 @@ class ArenaMonitorAdapter extends BaseAdapter {
    * Returns array of { name, organization }.
    */
   async _extractArenaModels() {
-    const response = await axios.get('https://lmarena.ai/leaderboard', {
+    const response = await http.get('https://lmarena.ai/leaderboard', {
       timeout: 30000,
       headers: {
         'User-Agent': UA,
@@ -323,7 +271,7 @@ class ArenaMonitorAdapter extends BaseAdapter {
    */
   async _extractBattleModeModels() {
     try {
-      const response = await axios.get('https://lmarena.ai/', {
+      const response = await http.get('https://lmarena.ai/', {
         timeout: 30000,
         headers: {
           'User-Agent': UA,

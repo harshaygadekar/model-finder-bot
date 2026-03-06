@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
@@ -11,7 +11,7 @@ class OllamaAdapter extends BaseAdapter {
 
   async check() {
     try {
-      const response = await axios.get(this.url, {
+      const response = await http.get(this.url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; ModelLookerBot/1.0)',
         },

@@ -1,3 +1,5 @@
+const db = require('../db/database');
+
 /**
  * Base adapter interface. All source adapters extend this.
  */
@@ -26,6 +28,27 @@ class BaseAdapter {
 
   getPriority() {
     return this.priority;
+  }
+
+  getStateNamespace() {
+    return `${this.sourceType}:${this.name}`;
+  }
+
+  loadState(stateKey, defaultValue = null) {
+    try {
+      return db.getAdapterStateValue(this.getStateNamespace(), stateKey, defaultValue);
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  saveState(stateKey, value) {
+    try {
+      db.setAdapterStateValue(this.getStateNamespace(), stateKey, value);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

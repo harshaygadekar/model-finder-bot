@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('./http');
 const logger = require('./logger');
 
 /**
@@ -8,6 +8,7 @@ const logger = require('./logger');
  */
 
 const TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
+const MY_MEMORY_URL = 'https://api.mymemory.translated.net/get';
 
 /**
  * Translate text to English.
@@ -21,35 +22,24 @@ async function translateToEnglish(text, sourceLang = 'auto') {
   // Skip if already in English (simple heuristic: check for CJK characters)
   if (!containsCJK(text)) return text;
 
-  try {
-    const response = await axios.get(TRANSLATE_URL, {
-      params: {
-        client: 'gtx',
-        sl: sourceLang,
-        tl: 'en',
-        dt: 't',
-        q: text.substring(0, 2000), // Limit to prevent abuse
-      },
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; ModelLookerBot/1.0)',
-      },
-      timeout: 10000,
-    });
+  const detectedSourceLang = sourceLang === 'auto' ? detectLikelySourceLanguage(text) : sourceLang;
+  const providers = [
+    () => translateWithGoogle(text, detectedSourceLang),
+    () => translateWithMyMemory(text, detectedSourceLang),
+  ];
 
-    // Response format: [[["translated text","original text",...],...],...]]
-    if (response.data && Array.isArray(response.data[0])) {
-      const translated = response.data[0]
-        .map((segment) => segment[0])
-        .filter(Boolean)
-        .join('');
-      return translated || text;
+  for (const provider of providers) {
+    try {
+      const translated = await provider();
+      if (translated && translated !== text) {
+        return translated;
+      }
+    } catch (error) {
+      logger.warn(`[Translator] Provider failed: ${error.message}`);
     }
-
-    return text;
-  } catch (error) {
-    logger.warn(`[Translator] Failed to translate: ${error.message}`);
-    return text; // Return original on failure
   }
+
+  return text;
 }
 
 /**
@@ -78,7 +68,66 @@ async function translateItem(item) {
  * Check if text contains CJK (Chinese/Japanese/Korean) characters.
  */
 function containsCJK(text) {
-  return /[\u4e00-\u9fff\u3400-\u4dbf\uF900-\uFAFF\u2e80-\u2eff\u3000-\u303f]/.test(text);
+  return /[\u4e00-\u9fff\u3400-\u4dbf\uF900-\uFAFF\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\uac00-\ud7af]/.test(text);
+}
+
+async function translateWithGoogle(text, sourceLang) {
+  const response = await http.get(TRANSLATE_URL, {
+    params: {
+      client: 'gtx',
+      sl: sourceLang || 'auto',
+      tl: 'en',
+      dt: 't',
+      q: text.substring(0, 2000),
+    },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; ModelLookerBot/1.0)',
+    },
+    timeout: 10000,
+    retry: { retries: 1 },
+  });
+
+  if (response.data && Array.isArray(response.data[0])) {
+    return response.data[0]
+      .map((segment) => segment[0])
+      .filter(Boolean)
+      .join('') || text;
+  }
+
+  return text;
+}
+
+async function translateWithMyMemory(text, sourceLang) {
+  const response = await http.get(MY_MEMORY_URL, {
+    params: {
+      q: text.substring(0, 500),
+      langpair: `${normalizeMyMemorySourceLang(sourceLang)}|en`,
+    },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; ModelLookerBot/1.0)',
+    },
+    timeout: 10000,
+    retry: { retries: 1 },
+  });
+
+  const translated = response.data?.responseData?.translatedText;
+  if (translated && typeof translated === 'string') {
+    return translated;
+  }
+
+  return text;
+}
+
+function detectLikelySourceLanguage(text) {
+  if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+  if (containsCJK(text)) return 'zh-CN';
+  return 'auto';
+}
+
+function normalizeMyMemorySourceLang(sourceLang) {
+  if (!sourceLang || sourceLang === 'auto') return 'zh-CN';
+  return sourceLang;
 }
 
 module.exports = { translateToEnglish, translateItem, containsCJK };

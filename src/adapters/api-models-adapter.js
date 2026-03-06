@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 const { API_MODEL_SOURCES, FREE_MODEL_AGGREGATORS } = require('../config/sources');
@@ -89,9 +89,12 @@ class APIModelsAdapter extends BaseAdapter {
     this.knownModels = {};    // { sourceName: Set<modelId> }
     this.initialized = {};    // { sourceName: boolean }
     this.reportedThisCycle = null; // Set<normalizedId> — cross-source dedup per check()
+    this._stateLoaded = false;
   }
 
   async check() {
+    this._ensureStateLoaded();
+
     const items = [];
     this.reportedThisCycle = new Set();
 
@@ -147,7 +150,7 @@ class APIModelsAdapter extends BaseAdapter {
       }
     }
 
-    const response = await axios.get(agg.url, {
+    const response = await http.get(agg.url, {
       headers,
       params: agg.params || {},
       timeout: 20000,
@@ -160,32 +163,44 @@ class APIModelsAdapter extends BaseAdapter {
     }
 
     const currentSet = new Set(models.map((m) => m.id));
+    const currentNormalized = this._mapIdSet(currentSet, (id) => this._normalizeId(id));
+    const currentFamilies = this._mapIdSet(currentSet, (id) => this._getCanonicalFamilyId(id));
 
     // First run: seed silently
     if (!this.initialized[sourceName]) {
       this.knownModels[sourceName] = currentSet;
       this.initialized[sourceName] = true;
+      this._persistKnownModels();
       logger.info(`[API Models] ${sourceName}: seeded ${currentSet.size} models`);
       return items;
     }
 
     const previousSet = this.knownModels[sourceName] || new Set();
+    const previousNormalized = this._mapIdSet(previousSet, (id) => this._normalizeId(id));
+    const previousFamilies = this._mapIdSet(previousSet, (id) => this._getCanonicalFamilyId(id));
 
     // Detect new models
     for (const model of models) {
-      if (previousSet.has(model.id)) continue;
-      if (this._isDateVariant(model.id, previousSet)) {
+      const normalizedId = this._normalizeId(model.id);
+      const canonicalFamilyId = this._getCanonicalFamilyId(model.id);
+
+      if (previousSet.has(model.id) || previousNormalized.has(normalizedId)) continue;
+      if (this._isDateVariant(model.id, previousFamilies)) {
         previousSet.add(model.id);
+        previousNormalized.add(normalizedId);
+        previousFamilies.add(canonicalFamilyId);
         continue;
       }
 
       // Cross-source dedup
-      const normId = this._normalizeId(model.id);
-      if (this.reportedThisCycle?.has(normId)) {
+      const dedupId = canonicalFamilyId || normalizedId;
+      if (this.reportedThisCycle?.has(dedupId)) {
         previousSet.add(model.id);
+        previousNormalized.add(normalizedId);
+        previousFamilies.add(canonicalFamilyId);
         continue;
       }
-      this.reportedThisCycle?.add(normId);
+      this.reportedThisCycle?.add(dedupId);
 
       const provider = model.provider || identifyProvider(model.id);
       const shortId = model.id.includes('/') ? model.id.split('/').pop() : model.id;
@@ -208,7 +223,10 @@ class APIModelsAdapter extends BaseAdapter {
 
     // Detect removals
     for (const modelId of previousSet) {
-      if (!currentSet.has(modelId)) {
+      const normalizedId = this._normalizeId(modelId);
+      const canonicalFamilyId = this._getCanonicalFamilyId(modelId);
+
+      if (!currentSet.has(modelId) && !currentNormalized.has(normalizedId) && !currentFamilies.has(canonicalFamilyId)) {
         const provider = identifyProvider(modelId);
         const shortId = modelId.includes('/') ? modelId.split('/').pop() : modelId;
 
@@ -227,6 +245,7 @@ class APIModelsAdapter extends BaseAdapter {
     }
 
     this.knownModels[sourceName] = currentSet;
+    this._persistKnownModels();
     return items;
   }
 
@@ -246,36 +265,48 @@ class APIModelsAdapter extends BaseAdapter {
       headers['Authorization'] = `Bearer ${key}`;
     }
 
-    const response = await axios.get(provider.url, { headers, timeout: 15000, params });
+    const response = await http.get(provider.url, { headers, timeout: 15000, params });
     const currentModels = provider.parseModels(response.data);
     if (!currentModels || currentModels.length === 0) return items;
 
     const currentSet = new Set(currentModels);
+    const currentNormalized = this._mapIdSet(currentSet, (id) => this._normalizeId(id));
+    const currentFamilies = this._mapIdSet(currentSet, (id) => this._getCanonicalFamilyId(id));
     const sourceName = `direct-${provider.name}`;
 
     if (!this.initialized[sourceName]) {
       this.knownModels[sourceName] = currentSet;
       this.initialized[sourceName] = true;
+      this._persistKnownModels();
       logger.info(`[API Models] ${provider.name} (direct): seeded ${currentSet.size} models`);
       return items;
     }
 
     const previousSet = this.knownModels[sourceName] || new Set();
+    const previousNormalized = this._mapIdSet(previousSet, (id) => this._normalizeId(id));
+    const previousFamilies = this._mapIdSet(previousSet, (id) => this._getCanonicalFamilyId(id));
 
     for (const modelId of currentModels) {
-      if (previousSet.has(modelId)) continue;
-      if (this._isDateVariant(modelId, previousSet)) {
+      const normalizedId = this._normalizeId(modelId);
+      const canonicalFamilyId = this._getCanonicalFamilyId(modelId);
+
+      if (previousSet.has(modelId) || previousNormalized.has(normalizedId)) continue;
+      if (this._isDateVariant(modelId, previousFamilies)) {
         previousSet.add(modelId);
+        previousNormalized.add(normalizedId);
+        previousFamilies.add(canonicalFamilyId);
         continue;
       }
 
       // Cross-source dedup
-      const normId = this._normalizeId(modelId);
-      if (this.reportedThisCycle?.has(normId)) {
+      const dedupId = canonicalFamilyId || normalizedId;
+      if (this.reportedThisCycle?.has(dedupId)) {
         previousSet.add(modelId);
+        previousNormalized.add(normalizedId);
+        previousFamilies.add(canonicalFamilyId);
         continue;
       }
-      this.reportedThisCycle?.add(normId);
+      this.reportedThisCycle?.add(dedupId);
 
       logger.info(`[API Models] 🆕 NEW via ${provider.name} (direct): ${modelId}`);
 
@@ -294,7 +325,10 @@ class APIModelsAdapter extends BaseAdapter {
 
     // Detect removals
     for (const modelId of previousSet) {
-      if (!currentSet.has(modelId)) {
+      const normalizedId = this._normalizeId(modelId);
+      const canonicalFamilyId = this._getCanonicalFamilyId(modelId);
+
+      if (!currentSet.has(modelId) && !currentNormalized.has(normalizedId) && !currentFamilies.has(canonicalFamilyId)) {
         logger.info(`[API Models] ❌ REMOVED from ${provider.name}: ${modelId}`);
         items.push({
           title: `❌ Model Removed: ${provider.name} - ${modelId}`,
@@ -311,6 +345,7 @@ class APIModelsAdapter extends BaseAdapter {
     }
 
     this.knownModels[sourceName] = currentSet;
+    this._persistKnownModels();
     return items;
   }
 
@@ -339,26 +374,57 @@ class APIModelsAdapter extends BaseAdapter {
     return parts.join('\n');
   }
 
+  _ensureStateLoaded() {
+    if (this._stateLoaded) return;
+
+    const persisted = this.loadState('known-models', {});
+    if (persisted && typeof persisted === 'object') {
+      for (const [sourceName, modelIds] of Object.entries(persisted)) {
+        const ids = Array.isArray(modelIds) ? modelIds.filter(Boolean) : [];
+        this.knownModels[sourceName] = new Set(ids);
+        this.initialized[sourceName] = ids.length > 0;
+      }
+    }
+
+    this._stateLoaded = true;
+  }
+
+  _persistKnownModels() {
+    const serialized = Object.fromEntries(
+      Object.entries(this.knownModels).map(([sourceName, modelIds]) => [sourceName, [...modelIds]])
+    );
+    this.saveState('known-models', serialized);
+  }
+
   /** Normalize model ID for cross-source dedup (strip provider prefix, lowercase) */
   _normalizeId(modelId) {
-    const slashIdx = modelId.indexOf('/');
-    const base = slashIdx > 0 ? modelId.substring(slashIdx + 1) : modelId;
-    return base.toLowerCase().replace(/[^a-z0-9.-]/g, '');
+    const segments = String(modelId || '').toLowerCase().trim().split('/');
+    const base = segments[segments.length - 1] || '';
+    return base.replace(/[^a-z0-9._-]/g, '');
+  }
+
+  _getCanonicalFamilyId(modelId) {
+    const normalizedId = this._normalizeId(modelId);
+    return normalizedId.replace(/(?:-|_)?20\d{2}(?:-?\d{2}){2}$/, '');
+  }
+
+  _mapIdSet(ids, mapper) {
+    const mapped = new Set();
+    for (const id of ids) {
+      const value = mapper(id);
+      if (value) mapped.add(value);
+    }
+    return mapped;
   }
 
   /**
    * Check if a model ID is just a date-suffixed variant of an already-known model.
    * e.g., "gpt-4o-2025-03-01" when "gpt-4o" or "gpt-4o-2024-11-20" is known.
    */
-  _isDateVariant(modelId, knownSet) {
-    const baseId = modelId.replace(/-\d{4}-?\d{2}-?\d{2}$/, '');
-    if (baseId !== modelId && knownSet.has(baseId)) return true;
-
-    for (const known of knownSet) {
-      const knownBase = known.replace(/-\d{4}-?\d{2}-?\d{2}$/, '');
-      if (knownBase === baseId && knownBase !== known) return true;
-    }
-    return false;
+  _isDateVariant(modelId, knownFamilies) {
+    const normalizedId = this._normalizeId(modelId);
+    const canonicalFamilyId = this._getCanonicalFamilyId(modelId);
+    return canonicalFamilyId !== normalizedId && knownFamilies.has(canonicalFamilyId);
   }
 }
 

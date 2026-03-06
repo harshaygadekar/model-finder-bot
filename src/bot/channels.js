@@ -10,6 +10,7 @@ const CHANNEL_DEFS = {
   'leaderboard-updates': { name: '📊-leaderboard-updates',  topic: 'Benchmark changes and new leaderboard entries' },
   'research-papers':     { name: '📄-research-papers',      topic: 'Weekly curated digest of top AI/ML research papers' },
   'weekly-digest':       { name: '📋-weekly-digest',        topic: 'Sunday roundup of everything that happened in AI this week' },
+  'major-events':        { name: '🎪-major-events',         topic: 'Live event tracking threads for major conferences, launch windows, and special monitoring mode' },
   'rumors-leaks':        { name: '🔮-rumors-leaks',         topic: 'Unverified leaks, rumors, and insider whispers of upcoming models' },
   'china-ai':            { name: '🐉-china-ai',             topic: 'Chinese AI ecosystem updates (DeepSeek, Qwen, GLM, Yi, MiniMax)' },
   'talent-moves':        { name: '🧠-talent-moves',         topic: 'AI researcher movement alerts and affiliation changes' },

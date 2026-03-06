@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 const db = require('../db/database');
@@ -37,7 +37,7 @@ class ArxivAdapter extends BaseAdapter {
 
     for (const cat of this.categories) {
       try {
-        const response = await axios.get(ARXIV_BASE, {
+        const response = await http.getArxiv(ARXIV_BASE, {
           params: {
             search_query: `cat:${cat.id}`,
             sortBy: 'submittedDate',
@@ -57,9 +57,6 @@ class ArxivAdapter extends BaseAdapter {
           }
         });
         allPapers.push(...papers);
-
-        // Polite delay between ArXiv requests
-        await new Promise((r) => setTimeout(r, 1000));
       } catch (error) {
         logger.error(`[ArXiv] ${cat.id} error: ${error.message}`);
       }

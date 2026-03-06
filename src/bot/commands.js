@@ -1,7 +1,8 @@
 const { SlashCommandBuilder, REST, Routes } = require('discord.js');
-const { buildStatusEmbed, buildSourcesEmbed, buildLatestEmbed } = require('./embeds');
+const { buildStatusEmbed, buildSourcesEmbed, buildLatestEmbed, buildHealthEmbed, buildTimelineEmbed, buildEventModesEmbed } = require('./embeds');
 const db = require('../db/database');
 const logger = require('../services/logger');
+const { parseCommaSeparatedList, startEventMode, listEventModes, stopEventMode } = require('../services/event-mode');
 
 const startTime = Date.now();
 
@@ -14,10 +15,43 @@ const commands = [
     .setName('sources')
     .setDescription('List all monitored sources and their status'),
   new SlashCommandBuilder()
+    .setName('health')
+    .setDescription('Show source health and delivery queue backlog'),
+  new SlashCommandBuilder()
+    .setName('event')
+    .setDescription('Manage major event monitoring mode')
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('start')
+        .setDescription('Start a new event monitoring mode')
+        .addStringOption((opt) => opt.setName('title').setDescription('Event title').setRequired(true))
+        .addStringOption((opt) => opt.setName('keywords').setDescription('Comma-separated event keywords').setRequired(true))
+        .addStringOption((opt) => opt.setName('slug').setDescription('Optional event slug'))
+        .addStringOption((opt) => opt.setName('sources').setDescription('Comma-separated boosted source names or type:<sourceType> values'))
+        .addIntegerOption((opt) => opt.setName('duration-hours').setDescription('How long the event mode stays active').setMinValue(1).setMaxValue(168))
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('stop')
+        .setDescription('Stop an active event monitoring mode')
+        .addStringOption((opt) => opt.setName('slug').setDescription('Event slug').setRequired(true))
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('list')
+        .setDescription('List active and recent event modes')
+    ),
+  new SlashCommandBuilder()
     .setName('latest')
     .setDescription('Show the most recent tracked items')
     .addIntegerOption((opt) =>
       opt.setName('count').setDescription('Number of items to show (default: 10)').setMinValue(1).setMaxValue(25)
+    ),
+  new SlashCommandBuilder()
+    .setName('timeline')
+    .setDescription('Show recent confirmed events and top reliable sources')
+    .addIntegerOption((opt) =>
+      opt.setName('count').setDescription('Number of timeline events to show (default: 8)').setMinValue(1).setMaxValue(15)
     ),
   new SlashCommandBuilder()
     .setName('digest')
@@ -27,6 +61,7 @@ const commands = [
          .setDescription('Type of digest to generate')
          .setRequired(true)
          .addChoices(
+           { name: 'Breaking Signals', value: 'breaking' },
            { name: 'Research Papers', value: 'paper' },
            { name: 'Weekly Roundup', value: 'roundup' },
            { name: 'Both', value: 'both' }
@@ -68,7 +103,48 @@ async function handleInteraction(interaction) {
       }
       case 'sources': {
         const statuses = db.getAllSourceStatuses();
-        const embed = buildSourcesEmbed(statuses);
+        const reliabilityRows = db.getLatestSourceReliabilityScores();
+        const reliabilityBySource = Object.fromEntries(reliabilityRows.map((row) => [row.source_name, row]));
+        const embed = buildSourcesEmbed(statuses, reliabilityBySource);
+        await interaction.reply(embed);
+        break;
+      }
+      case 'health': {
+        const sourceHealth = db.getSourceHealthSummaries();
+        const queueStats = db.getDeliveryQueueStats();
+        const embed = buildHealthEmbed(sourceHealth, queueStats);
+        await interaction.reply(embed);
+        break;
+      }
+      case 'event': {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'start') {
+          const title = interaction.options.getString('title');
+          const slug = interaction.options.getString('slug');
+          const keywords = parseCommaSeparatedList(interaction.options.getString('keywords'));
+          const sourceBoosts = parseCommaSeparatedList(interaction.options.getString('sources'));
+          const durationHours = interaction.options.getInteger('duration-hours') || 24;
+          const eventMode = await startEventMode({ title, slug, keywords, sourceBoosts, durationHours });
+          const threadSuffix = eventMode.threadId ? ` • thread <#${eventMode.threadId}>` : '';
+          await interaction.reply(`🎪 Event mode started: **${eventMode.title}** (\`${eventMode.slug}\`)${threadSuffix}`);
+          break;
+        }
+
+        if (subcommand === 'stop') {
+          const slug = interaction.options.getString('slug');
+          const eventMode = stopEventMode(slug);
+          if (!eventMode) {
+            await interaction.reply({ content: `❌ No event mode found for \`${slug}\`.`, ephemeral: true });
+            break;
+          }
+
+          await interaction.reply(`🛑 Event mode stopped: **${eventMode.title}** (\`${eventMode.slug}\`)`);
+          break;
+        }
+
+        const eventModes = listEventModes();
+        const embed = buildEventModesEmbed(eventModes);
         await interaction.reply(embed);
         break;
       }
@@ -79,18 +155,27 @@ async function handleInteraction(interaction) {
         await interaction.reply(embed);
         break;
       }
+      case 'timeline': {
+        const count = interaction.options.getInteger('count') || 8;
+        const events = db.getRecentEventTimeline(count, 24 * 7);
+        const topSources = db.getTopReliableSources(5);
+        const embed = buildTimelineEmbed(events, topSources);
+        await interaction.reply(embed);
+        break;
+      }
       case 'digest': {
-        const { sendPaperDigest, sendWeeklyRoundup } = require('../services/digest');
+        const { sendBreakingDigest, sendPaperDigest, sendWeeklyRoundup } = require('../services/digest');
         const type = interaction.options.getString('type');
-        
-        await interaction.deferReply();
+
+        await interaction.deferReply({ ephemeral: true });
         try {
+          if (type === 'breaking') await sendBreakingDigest();
           if (type === 'paper' || type === 'both') await sendPaperDigest();
           if (type === 'roundup' || type === 'both') await sendWeeklyRoundup();
-          await interaction.followUp('✅ Digest generation triggered successfully.');
+          await interaction.editReply('✅ Digest generation triggered successfully.');
         } catch (err) {
           logger.error(`Error generating digest: ${err.message}`);
-          await interaction.followUp('❌ Failed to generate digest.');
+          await interaction.editReply('❌ Failed to generate digest.');
         }
         break;
       }

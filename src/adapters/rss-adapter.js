@@ -1,5 +1,5 @@
 const RSSParser = require('rss-parser');
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 
@@ -29,7 +29,7 @@ class RSSAdapter extends BaseAdapter {
   async check() {
     try {
       // Fetch feed manually so we can sanitize invalid XML before parsing
-      const response = await axios.get(this.url, {
+      const response = await http.get(this.url, {
         timeout: 15000,
         headers: {
           'User-Agent': 'ModelLookerBot/1.0 (+https://github.com/model-looker-bot)',

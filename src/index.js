@@ -5,9 +5,12 @@ const { createClient, login } = require('./bot/client');
 const { ensureChannels } = require('./bot/channels');
 const { registerCommands, handleInteraction } = require('./bot/commands');
 const { scheduleAll } = require('./services/scheduler');
-const { sendStatusMessage } = require('./services/notifier');
+const { sendStatusMessage, startDeliveryWorker, stopDeliveryWorker } = require('./services/notifier');
+const { startWebhookReceiver, stopWebhookReceiver } = require('./services/webhooks/receiver');
 const db = require('./db/database');
 const logger = require('./services/logger');
+
+let webhookServer = null;
 
 // ─── Adapter Imports ─────────────────────────────────────────────────────────
 const RSSAdapter = require('./adapters/rss-adapter');
@@ -61,6 +64,15 @@ function validateEnv() {
 
   if (!process.env.GITHUB_TOKEN) {
     logger.warn('GitHub token not set. Using unauthenticated API (60 req/hr limit).');
+  }
+
+  if (String(process.env.CLASSIFIER_ENABLED || '').toLowerCase() === 'true' && !process.env.GROQ_API_KEY) {
+    logger.warn('CLASSIFIER_ENABLED is true but GROQ_API_KEY is missing. Falling back to keyword-only classification.');
+  }
+
+  if (String(process.env.WEBHOOK_ENABLED || '').toLowerCase() === 'true' && !process.env.GITHUB_WEBHOOK_SECRET) {
+    logger.error('WEBHOOK_ENABLED is true but GITHUB_WEBHOOK_SECRET is missing.');
+    process.exit(1);
   }
 
   // Informational: which API model sources are active
@@ -237,6 +249,9 @@ async function main() {
   logger.info('📁 Initializing database...');
   db.init();
 
+  // Optionally start webhook receiver before the Discord client becomes ready
+  webhookServer = startWebhookReceiver();
+
   // Create Discord client
   const client = createClient();
 
@@ -258,6 +273,9 @@ async function main() {
       // Ensure channels exist
       logger.info('📺 Setting up channels...');
       await ensureChannels(guild);
+
+      // Start background delivery worker now that channels are ready
+      startDeliveryWorker();
 
       // Register slash commands
       await registerCommands(process.env.DISCORD_TOKEN, c.user.id, process.env.DISCORD_GUILD_ID);
@@ -291,12 +309,16 @@ async function main() {
 
 process.on('SIGINT', () => {
   logger.info('Received SIGINT, shutting down...');
+  stopDeliveryWorker();
+  stopWebhookReceiver(webhookServer);
   db.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   logger.info('Received SIGTERM, shutting down...');
+  stopDeliveryWorker();
+  stopWebhookReceiver(webhookServer);
   db.close();
   process.exit(0);
 });

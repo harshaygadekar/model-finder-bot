@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 
@@ -16,7 +16,7 @@ class RedditAdapter extends BaseAdapter {
   async check() {
     try {
       await this._ensureToken();
-      const response = await axios.get(
+      const response = await http.get(
         `https://oauth.reddit.com/r/${this.subreddit}/new`,
         {
           headers: {
@@ -56,6 +56,10 @@ class RedditAdapter extends BaseAdapter {
    */
   async _ensureToken() {
     if (sharedToken && Date.now() < sharedTokenExpiry) return;
+    if (sharedTokenRefreshPromise) {
+      await sharedTokenRefreshPromise;
+      return;
+    }
 
     const clientId = process.env.REDDIT_CLIENT_ID;
     const clientSecret = process.env.REDDIT_CLIENT_SECRET;
@@ -66,23 +70,31 @@ class RedditAdapter extends BaseAdapter {
 
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-    const response = await axios.post(
-      'https://www.reddit.com/api/v1/access_token',
-      'grant_type=client_credentials',
-      {
-        headers: {
-          Authorization: `Basic ${auth}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': process.env.REDDIT_USER_AGENT || 'ModelLookerBot/1.0',
-        },
-        timeout: 10000,
-      }
-    );
+    sharedTokenRefreshPromise = (async () => {
+      const response = await http.post(
+        'https://www.reddit.com/api/v1/access_token',
+        'grant_type=client_credentials',
+        {
+          headers: {
+            Authorization: `Basic ${auth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': process.env.REDDIT_USER_AGENT || 'ModelLookerBot/1.0',
+          },
+          timeout: 10000,
+          retry: { retries: 2, baseDelayMs: 750 },
+        }
+      );
 
-    sharedToken = response.data.access_token;
-    // Refresh 60 seconds before expiry
-    sharedTokenExpiry = Date.now() + (response.data.expires_in - 60) * 1000;
-    logger.debug(`[Reddit] OAuth token refreshed, expires in ${response.data.expires_in}s`);
+      sharedToken = response.data.access_token;
+      sharedTokenExpiry = Date.now() + (response.data.expires_in - 60) * 1000;
+      logger.debug(`[Reddit] OAuth token refreshed, expires in ${response.data.expires_in}s`);
+    })();
+
+    try {
+      await sharedTokenRefreshPromise;
+    } finally {
+      sharedTokenRefreshPromise = null;
+    }
   }
 }
 
@@ -102,5 +114,6 @@ function buildTags(post) {
 // Share the token across all Reddit adapter instances
 let sharedToken = null;
 let sharedTokenExpiry = 0;
+let sharedTokenRefreshPromise = null;
 
 module.exports = RedditAdapter;

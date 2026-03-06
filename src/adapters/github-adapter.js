@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 
@@ -45,7 +45,7 @@ class GitHubAdapter extends BaseAdapter {
       headers.Authorization = `token ${this.token}`;
     }
 
-    const response = await axios.get(
+    const response = await http.get(
       `https://api.github.com/repos/${org}/${repo}/releases`,
       {
         headers,

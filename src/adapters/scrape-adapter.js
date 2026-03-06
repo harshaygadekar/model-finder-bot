@@ -1,7 +1,9 @@
-const axios = require('axios');
+const http = require('../services/http');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
+const { extractGenericItems } = require('../services/extractors/generic-recipe');
+const { getRecipeForAdapter } = require('../services/extractors/recipe-registry');
 
 class ScrapeAdapter extends BaseAdapter {
   constructor(source) {
@@ -15,11 +17,19 @@ class ScrapeAdapter extends BaseAdapter {
     this.ignorePattern = source.ignorePattern || null;
     // Whether content needs CJK translation
     this.translate = source.translate || false;
+    this.contentSelectors = source.contentSelectors || ['main', 'article', '[role="main"]'];
+    this.allowedOrigins = source.allowedOrigins || [new URL(this.baseUrl).origin];
+    this.minTitleLength = source.minTitleLength || 8;
+    this.maxItems = source.maxItems || 10;
+    this.allowTitlePattern = source.allowTitlePattern || null;
+    this.denyTitlePattern = source.denyTitlePattern || /^(home|about|pricing|careers|contact|news|blog|docs|login|sign in|learn more|read more|view all|see all|menu|search|back|next)$/i;
+    this.extractItems = typeof source.extractItems === 'function' ? source.extractItems : null;
+    this.recipeKey = source.recipeKey || null;
   }
 
   async check() {
     try {
-      const response = await axios.get(this.url, {
+      const response = await http.get(this.url, {
         timeout: 15000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -29,64 +39,23 @@ class ScrapeAdapter extends BaseAdapter {
       });
 
       const $ = cheerio.load(response.data);
-      const items = [];
-      const seenLinks = new Set();
 
-      this.linkSelectors.forEach((selector) => {
-        $(selector).each((i, el) => {
-          let href = $(el).attr('href');
-          let title = $(el).text() || '';
+      if (this.extractItems) {
+        const extractedItems = this.extractItems($, this);
+        if (Array.isArray(extractedItems) && extractedItems.length > 0) {
+          return extractedItems.slice(0, this.maxItems);
+        }
+      }
 
-          if (!href) return;
+      const recipe = getRecipeForAdapter(this);
+      if (recipe) {
+        const recipeItems = recipe.extract($, this);
+        if (Array.isArray(recipeItems) && recipeItems.length > 0) {
+          return recipeItems.slice(0, this.maxItems);
+        }
+      }
 
-          // Resolve relative URLs
-          if (href.startsWith('/')) {
-            href = `${this.baseUrl}${href}`;
-          } else if (!href.startsWith('http')) {
-            return; // Skip anchor links or other malformed fragments
-          }
-
-          // Filter against patterns
-          if (!this.linkPattern.test(href)) return;
-          if (this.ignorePattern && this.ignorePattern.test(href)) return;
-
-          // Normalize basic title text stripping tabs/newlines
-          title = title.replace(/\s+/g, ' ').trim();
-          
-          // Deduplicate
-          if (seenLinks.has(href)) {
-             // If we already have this link, but this element has a better title, update it
-             if (title.length > 10) {
-               const existing = items.find(i => i.url === href);
-               if (existing && existing.title.length < title.length) {
-                 existing.title = title;
-               }
-             }
-             return;
-          }
-
-          seenLinks.add(href);
-
-          items.push({
-            title: title || 'New Blog Post',
-            description: `New article detected on ${this.name}`,
-            url: href,
-            sourceName: this.name,
-            sourceType: this.sourceType,
-            priority: this.priority,
-            tags: ['blog', 'official'],
-            publishedAt: new Date(), // Scraped items don't have perfect timestamps usually
-            needsTranslation: this.translate,
-          });
-        });
-      });
-
-      // Sort by newest first? Scraping doesn't guarantee order, but usually top-down is chronological
-      // Let's just return the top 10 unique links found on the page
-      
-      // Filter out items with very short/missing titles if possible, though some CMS use image links
-      const validItems = items.filter(i => i.title && i.title.length > 3).slice(0, 10);
-      return validItems;
+      return extractGenericItems($, this);
 
     } catch (error) {
       if (error.response?.status === 403 || error.response?.status === 401) {

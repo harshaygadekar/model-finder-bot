@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
@@ -95,9 +95,12 @@ class ChangelogAdapter extends BaseAdapter {
     super('API Changelog Monitor', 'changelog', 0); // P0 — official API changelogs are authoritative
     this.knownEntries = {};   // { targetName: Set<hash> }
     this.initialized = {};
+    this._stateLoaded = false;
   }
 
   async check() {
+    this._ensureStateLoaded();
+
     const items = [];
 
     const promises = CHANGELOG_TARGETS.map(async (target) => {
@@ -120,7 +123,7 @@ class ChangelogAdapter extends BaseAdapter {
   async _scrapeChangelog(target) {
     const items = [];
 
-    const response = await axios.get(target.url, {
+    const response = await http.get(target.url, {
       timeout: 15000,
       headers: {
         'User-Agent': UA,
@@ -188,6 +191,7 @@ class ChangelogAdapter extends BaseAdapter {
     if (!this.initialized[target.name]) {
       this.knownEntries[target.name] = currentHashes;
       this.initialized[target.name] = true;
+      this._persistKnownEntries();
       logger.info(`[Changelog] ${target.name}: seeded ${currentHashes.size} relevant entries`);
       return items;
     }
@@ -248,7 +252,30 @@ class ChangelogAdapter extends BaseAdapter {
 
     // Update known set
     this.knownEntries[target.name] = currentHashes;
+    this._persistKnownEntries();
     return items;
+  }
+
+  _ensureStateLoaded() {
+    if (this._stateLoaded) return;
+
+    const persisted = this.loadState('known-entries', {});
+    if (persisted && typeof persisted === 'object') {
+      for (const [targetName, hashes] of Object.entries(persisted)) {
+        const knownHashes = Array.isArray(hashes) ? hashes.filter(Boolean) : [];
+        this.knownEntries[targetName] = new Set(knownHashes);
+        this.initialized[targetName] = knownHashes.length > 0;
+      }
+    }
+
+    this._stateLoaded = true;
+  }
+
+  _persistKnownEntries() {
+    const serialized = Object.fromEntries(
+      Object.entries(this.knownEntries).map(([targetName, hashes]) => [targetName, [...hashes]])
+    );
+    this.saveState('known-entries', serialized);
   }
 
   /**

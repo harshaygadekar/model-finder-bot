@@ -75,7 +75,7 @@ Click **"Edit"** in Network settings:
 |------|------|--------|-------------|
 | SSH | 22 | My IP (or `0.0.0.0/0` if dynamic IP) | SSH access |
 
-> ⚠️ The bot doesn't need HTTP/HTTPS ports — it only makes outbound connections.
+> ⚠️ By default the bot only needs outbound connections. If you enable `WEBHOOK_ENABLED=true`, you must also provide public HTTPS ingress (typically via a reverse proxy or load balancer) and allow the corresponding inbound web ports.
 
 ### 2.4 Storage
 

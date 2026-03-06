@@ -167,6 +167,24 @@ GITHUB_TOKEN=paste_your_github_token_here
 LOG_LEVEL=info
 ```
 
+Optional feature flags you can add later:
+
+```env
+# Hybrid classifier (uses GROQ_API_KEY when enabled)
+CLASSIFIER_ENABLED=false
+CLASSIFIER_MODEL=llama-3.1-8b-instant
+
+# GitHub webhooks (requires public HTTPS ingress in production)
+WEBHOOK_ENABLED=false
+WEBHOOK_PORT=8787
+GITHUB_WEBHOOK_SECRET=
+WEBHOOK_MAX_BODY_BYTES=1048576
+WEBHOOK_REQUEST_TIMEOUT_MS=10000
+
+# Browser fallback scraping
+BROWSER_MODE=disabled
+```
+
 > ⚠️ No spaces around the `=` sign. No quotes around the values.
 
 ---
@@ -206,7 +224,7 @@ npm start
 
 ### 5.4 — Verify in Discord
 
-1. Check your server — you should see a new **"🤖 AI Tracker"** category with 6 channels
+1. Check your server — you should see a new **"🤖 AI Tracker"** category with 12 channels (including health, event mode, rumors, and bot status channels)
 2. Check `#🤖-bot-status` for the startup message
 3. Try slash commands: type `/status`, `/sources`, or `/latest`
 4. Within 5 minutes, you should start seeing notifications appear in the channels

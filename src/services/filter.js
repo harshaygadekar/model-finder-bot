@@ -1,4 +1,5 @@
-const { calculateRelevance, RELEVANCE_THRESHOLD } = require('../config/keywords');
+const { classifyItem } = require('./classification/classifier');
+const { recordObservationAndEvent } = require('./intelligence/corroboration');
 const logger = require('./logger');
 
 /**
@@ -11,31 +12,36 @@ const logger = require('./logger');
  * @param {Array} items - Items from an adapter
  * @returns {Array} - Filtered items with relevanceScore added
  */
-function filterItems(items) {
-  return items
-    .map((item) => {
-      // Auto-pass for high-priority direct sources
-      if (item.priority <= 1) {
-        return { ...item, relevanceScore: 1.0 };
-      }
+async function filterItems(items) {
+  const results = await Promise.all(items.map(async (item) => {
+    const classification = await classifyItem(item);
+    const intelligence = recordObservationAndEvent(item, classification);
+    const shouldPass = item.priority <= 1 || classification.label !== 'irrelevant';
 
-      // Apply keyword relevance filter for lower-priority sources
-      const text = `${item.title} ${item.description}`;
-      const { score, matches } = calculateRelevance(text);
+    if (shouldPass) {
+      logger.debug(
+        `[Filter] PASS (${classification.confidence.toFixed(2)}): "${item.title.substring(0, 60)}..." [${classification.label} via ${classification.providerUsed}]`
+      );
+      return {
+        ...item,
+        classification,
+        observationId: intelligence.observation?.id || null,
+        eventId: intelligence.event?.id || null,
+        eventKey: intelligence.event?.event_key || null,
+        eventStatus: intelligence.event?.status || null,
+        eventConfidence: intelligence.event?.confidence_score ?? classification.confidence,
+        relevanceScore: classification.confidence,
+        matchedKeywords: classification.reasonCodes,
+      };
+    }
 
-      if (score >= RELEVANCE_THRESHOLD) {
-        logger.debug(
-          `[Filter] PASS (${score.toFixed(2)}): "${item.title.substring(0, 60)}..." [${matches.join(', ')}]`
-        );
-        return { ...item, relevanceScore: score, matchedKeywords: matches };
-      } else {
-        logger.debug(
-          `[Filter] SKIP (${score.toFixed(2)}): "${item.title.substring(0, 60)}..."`
-        );
-        return null;
-      }
-    })
-    .filter(Boolean);
+    logger.debug(
+      `[Filter] SKIP (${classification.confidence.toFixed(2)}): "${item.title.substring(0, 60)}..." [${classification.label}]`
+    );
+    return null;
+  }));
+
+  return results.filter(Boolean);
 }
 
 module.exports = { filterItems };

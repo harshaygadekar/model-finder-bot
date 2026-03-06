@@ -80,6 +80,7 @@ const SCRAPE_SOURCES = [
     baseUrl: 'https://www.anthropic.com',
     linkSelectors: ['a'],
     linkPattern: /\/news\//,
+    recipeKey: 'anthropic-news',
     priority: PRIORITY.P0,
   },
   {
@@ -88,6 +89,7 @@ const SCRAPE_SOURCES = [
     baseUrl: 'https://mistral.ai',
     linkSelectors: ['a'],
     linkPattern: /\/news\//,
+    recipeKey: 'mistral-news',
     priority: PRIORITY.P0,
   },
   {
@@ -96,6 +98,7 @@ const SCRAPE_SOURCES = [
     baseUrl: 'https://cohere.com',
     linkSelectors: ['a'],
     linkPattern: /\/blog\/|\/research\//,
+    recipeKey: 'cohere-blog',
     priority: PRIORITY.P0,
   },
 
@@ -126,6 +129,7 @@ const SCRAPE_SOURCES = [
     baseUrl: 'https://qwenlm.github.io',
     linkSelectors: ['a[href*="/blog/"]', 'article a', 'h2 a'],
     linkPattern: /\/blog\//,
+    recipeKey: 'qwen-blog',
     priority: PRIORITY.P0,
     sourceTypeOverride: 'china-ai',
   },
@@ -135,6 +139,7 @@ const SCRAPE_SOURCES = [
     baseUrl: 'https://kimi.ai',
     linkSelectors: ['a'],
     linkPattern: /\/blog\//,
+    recipeKey: 'moonshot-kimi',
     priority: PRIORITY.P1,
     sourceTypeOverride: 'china-ai',
   },

@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const cheerio = require('cheerio');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
@@ -86,9 +86,12 @@ class PlaygroundScraperAdapter extends BaseAdapter {
     super('Playground Scraper', 'playground-leak', 1); // P1 — potential unreleased models
     this.knownModels = {};   // { targetName: Set<modelId> }
     this.initialized = {};
+    this._stateLoaded = false;
   }
 
   async check() {
+    this._ensureStateLoaded();
+
     const items = [];
 
     const promises = PLAYGROUND_TARGETS.map(async (target) => {
@@ -110,7 +113,7 @@ class PlaygroundScraperAdapter extends BaseAdapter {
 
   async _scrapeTarget(target) {
     const items = [];
-    const response = await axios.get(target.url, {
+    const response = await http.get(target.url, {
       timeout: 15000,
       headers: {
         'User-Agent': UA,
@@ -141,7 +144,7 @@ class PlaygroundScraperAdapter extends BaseAdapter {
       // Fetch up to 10 bundles in parallel (with timeout)
       const bundlePromises = scriptUrls.slice(0, 10).map(async (url) => {
         try {
-          const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': UA } });
+          const r = await http.get(url, { timeout: 10000, headers: { 'User-Agent': UA } });
           return typeof r.data === 'string' ? r.data : '';
         } catch {
           return '';
@@ -172,6 +175,7 @@ class PlaygroundScraperAdapter extends BaseAdapter {
     if (!this.initialized[target.name]) {
       this.knownModels[target.name] = new Set(currentSet);
       this.initialized[target.name] = true;
+      this._persistKnownModels();
       logger.info(`[Playground] ${target.name}: seeded ${currentSet.size} model IDs`);
       return items;
     }
@@ -209,7 +213,30 @@ class PlaygroundScraperAdapter extends BaseAdapter {
 
     // Update known set
     this.knownModels[target.name] = new Set(currentSet);
+    this._persistKnownModels();
     return items;
+  }
+
+  _ensureStateLoaded() {
+    if (this._stateLoaded) return;
+
+    const persisted = this.loadState('known-models', {});
+    if (persisted && typeof persisted === 'object') {
+      for (const [targetName, modelIds] of Object.entries(persisted)) {
+        const ids = Array.isArray(modelIds) ? modelIds.filter(Boolean) : [];
+        this.knownModels[targetName] = new Set(ids);
+        this.initialized[targetName] = ids.length > 0;
+      }
+    }
+
+    this._stateLoaded = true;
+  }
+
+  _persistKnownModels() {
+    const serialized = Object.fromEntries(
+      Object.entries(this.knownModels).map(([targetName, modelIds]) => [targetName, [...modelIds]])
+    );
+    this.saveState('known-models', serialized);
   }
 }
 

@@ -5,7 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "test:groq": "node scripts/groq-smoke.js",
+    "test:groq:eval": "node scripts/groq-eval.js"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +19,7 @@
     "better-sqlite3": "^12.6.2",
     "cheerio": "^1.2.0",
     "discord.js": "^14.25.1",
+    "playwright": "^1.53.0",
     "dotenv": "^17.3.1",
     "node-cron": "^4.2.1",
     "rss-parser": "^3.13.0",

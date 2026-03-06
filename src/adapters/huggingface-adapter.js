@@ -1,4 +1,4 @@
-const axios = require('axios');
+const http = require('../services/http');
 const BaseAdapter = require('./base-adapter');
 const logger = require('../services/logger');
 
@@ -19,7 +19,7 @@ class HuggingFaceAdapter extends BaseAdapter {
 
   async check() {
     try {
-      const response = await axios.get(`${HF_API_BASE}/models`, {
+      const response = await http.get(`${HF_API_BASE}/models`, {
         params: {
           author: this.org,
           sort: 'createdAt',
