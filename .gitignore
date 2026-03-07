@@ -5,7 +5,13 @@ node_modules/
 .env.*
 !.env.example
 auth.txt
-
+AWS_DEPLOYMENT_GUIDE.md
+BOT_IMPROVMENET_ANALYSIS.md
+features-addition/
+pending.md
+setup.md
+groq-docs.md
+infra-plan.md
 # Local runtime data
 data/
 *.db
