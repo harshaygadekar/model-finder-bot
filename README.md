@@ -297,35 +297,6 @@ Available scripts:
 | `npm run test:groq` | Groq smoke test |
 | `npm run test:groq:eval` | Groq evaluation script |
 
-## Project layout
-
-```text
-src/
-  adapters/         Source-specific collectors
-  bot/              Discord client, channel setup, embeds, slash commands
-  config/           Source lists, keywords, routing policies
-  db/               SQLite schema and persistence helpers
-  services/         Scheduler, notifier, health server, filtering, digests
-    browser/        Browser-based fetch helpers
-    classification/ Keyword/Groq classification
-    intelligence/   Corroboration, enrichment, reliability, delivery policy
-    network/        HTTP policies, crawl recording, request context
-    webhooks/       Inbound webhook receiver and normalization
-  utils/            Miscellaneous helpers
-test/               Automated tests
-scripts/            Utility and evaluation scripts
-data/               SQLite database files
-```
-
-## Deployment docs
-
-Additional project docs already in the repo:
-
-- `SETUP.md` — end-to-end setup guide
-- `AWS_DEPLOYMENT_GUIDE.md` — EC2 deployment with PM2 or Docker
-- `BOT_IMPROVEMENT_ANALYSIS.md` — notes on reliability/intelligence improvements
-- `featrues-addition/` — feature planning documents and phased roadmap
-
 ## Practical notes
 
 - This project is written in **CommonJS**, not ESM.
