@@ -15,8 +15,24 @@ const HEALTH_BACKOFF_WINDOWS_MS = {
 };
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const SCHEDULER_TICK_MS = 30 * 1000;
+const SCHEDULER_HEARTBEAT_TIMEOUT_MS = Math.max(SCHEDULER_TICK_MS * 3, 90 * 1000);
 
 let dispatcherTimer = null;
+let dispatcherStartedAt = null;
+let lastDispatcherHeartbeatAt = null;
+let lastDispatcherError = null;
+let initialChecksCompletedAt = null;
+
+function markDispatcherHeartbeat() {
+  lastDispatcherHeartbeatAt = new Date().toISOString();
+}
+
+function markDispatcherError(error) {
+  lastDispatcherError = {
+    message: error.message || String(error),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 /**
  * Run a single adapter check cycle: fetch → filter → notify.
@@ -275,13 +291,21 @@ function startDispatcher() {
     return;
   }
 
+  dispatcherStartedAt = new Date().toISOString();
+  initialChecksCompletedAt = null;
+  lastDispatcherError = null;
+  markDispatcherHeartbeat();
+
   dispatcherTimer = setInterval(() => {
+    markDispatcherHeartbeat();
     processDueRuntimeEntries().catch((error) => {
+      markDispatcherError(error);
       logger.error(`[Scheduler] Dispatcher tick failed: ${error.message}`);
     });
   }, SCHEDULER_TICK_MS);
 
   processDueRuntimeEntries().catch((error) => {
+    markDispatcherError(error);
     logger.error(`[Scheduler] Initial dispatcher tick failed: ${error.message}`);
   });
 }
@@ -312,6 +336,7 @@ function scheduleAll(adapterConfigs) {
   logger.info(`[Scheduler] Scheduling ${adapterConfigs.length} adapter(s) with adaptive runtime...`);
 
   runtimeEntries.length = 0;
+  initialChecksCompletedAt = null;
   adapterConfigs.forEach(({ adapter, interval }) => {
     scheduleAdapter(adapter, interval);
   });
@@ -342,6 +367,7 @@ async function runInitialChecks(adapterConfigs) {
   );
 
   await Promise.allSettled(workers);
+  initialChecksCompletedAt = new Date().toISOString();
 }
 
 async function processStartupQueue(queue, workerIndex) {
@@ -458,10 +484,31 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getSchedulerStatus(now = Date.now()) {
+  const lastHeartbeatMs = lastDispatcherHeartbeatAt ? new Date(lastDispatcherHeartbeatAt).getTime() : null;
+  const heartbeatAgeMs = Number.isFinite(lastHeartbeatMs) ? Math.max(0, now - lastHeartbeatMs) : null;
+
+  return {
+    startedAt: dispatcherStartedAt,
+    running: !!dispatcherTimer,
+    lastHeartbeatAt: lastDispatcherHeartbeatAt,
+    heartbeatAgeMs,
+    heartbeatTimeoutMs: SCHEDULER_HEARTBEAT_TIMEOUT_MS,
+    healthy: !!dispatcherTimer
+      && heartbeatAgeMs != null
+      && heartbeatAgeMs <= SCHEDULER_HEARTBEAT_TIMEOUT_MS,
+    entryCount: runtimeEntries.length,
+    inFlightCount: runtimeEntries.filter((entry) => entry.inFlight).length,
+    initialChecksCompletedAt,
+    lastError: lastDispatcherError,
+  };
+}
+
 module.exports = {
   scheduleAdapter,
   scheduleAll,
   stopAll,
+  getSchedulerStatus,
   runAdapterCheck,
   parseSimpleCronIntervalToMs,
   computeNextIntervalMs,

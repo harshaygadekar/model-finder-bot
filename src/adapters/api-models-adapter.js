@@ -26,7 +26,8 @@ const { API_MODEL_SOURCES, FREE_MODEL_AGGREGATORS } = require('../config/sources
  *  1. Poll all active sources every 2 minutes
  *  2. Diff model IDs against last-known set per source
  *  3. Dedup across sources within same cycle
- *  4. New model → instant P0 alert to #model-updates + #rumors-leaks
+ *  4. New model → instant high-priority signal, with the delivery policy deciding between
+ *     #model-updates, #major-releases, or #rumors-leaks based on confidence and context
  */
 
 // ─── Provider prefix → human-readable name mapping ──────────────────────────

@@ -5,6 +5,23 @@ const { handleGitHubWebhook } = require('./routes/github');
 const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_WEBHOOK_REQUEST_TIMEOUT_MS = 10_000;
 
+let webhookStatus = {
+  enabled: false,
+  listening: false,
+  port: null,
+  updatedAt: null,
+  error: null,
+};
+
+function updateWebhookStatus(patch) {
+  webhookStatus = {
+    ...webhookStatus,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  return getWebhookReceiverStatus();
+}
+
 function jsonResponse(response, statusCode, body) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json' });
   response.end(typeof body === 'string' ? body : JSON.stringify(body));
@@ -49,16 +66,32 @@ function shouldEnableWebhookReceiver() {
   return String(process.env.WEBHOOK_ENABLED || '').toLowerCase() === 'true';
 }
 
-function startWebhookReceiver() {
-  if (!shouldEnableWebhookReceiver()) {
+async function startWebhookReceiver() {
+  const enabled = shouldEnableWebhookReceiver();
+  const port = Number(process.env.WEBHOOK_PORT || 8787);
+
+  updateWebhookStatus({
+    enabled,
+    listening: false,
+    port: enabled ? port : null,
+    error: null,
+  });
+
+  if (!enabled) {
     return null;
   }
 
   if (!process.env.GITHUB_WEBHOOK_SECRET) {
-    throw new Error('WEBHOOK_ENABLED is true but GITHUB_WEBHOOK_SECRET is not set');
+    const error = new Error('WEBHOOK_ENABLED is true but GITHUB_WEBHOOK_SECRET is not set');
+    updateWebhookStatus({
+      enabled: true,
+      listening: false,
+      port,
+      error: error.message,
+    });
+    throw error;
   }
 
-  const port = Number(process.env.WEBHOOK_PORT || 8787);
   const server = http.createServer(async (request, response) => {
     request.setTimeout(getWebhookRequestTimeoutMs(), () => {
       request.destroy(createHttpError('Webhook request timed out', 408));
@@ -94,24 +127,76 @@ function startWebhookReceiver() {
     }
   });
 
-  server.listen(port, () => {
-    logger.info(`[Webhooks] Receiver listening on port ${port}`);
+  server.on('close', () => {
+    updateWebhookStatus({
+      enabled: true,
+      listening: false,
+      port,
+    });
   });
 
   server.requestTimeout = getWebhookRequestTimeoutMs();
+
+  await new Promise((resolve, reject) => {
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      updateWebhookStatus({
+        enabled: true,
+        listening: false,
+        port,
+        error: error.message,
+      });
+      reject(error);
+    };
+
+    const handleListening = () => {
+      server.off('error', handleError);
+      updateWebhookStatus({
+        enabled: true,
+        listening: true,
+        port,
+        error: null,
+      });
+      logger.info(`[Webhooks] Receiver listening on port ${port}`);
+      resolve();
+    };
+
+    server.once('error', handleError);
+    server.listen(port, handleListening);
+  });
+
+  server.on('error', (error) => {
+    updateWebhookStatus({
+      enabled: true,
+      listening: false,
+      port,
+      error: error.message,
+    });
+    logger.error(`[Webhooks] Receiver error: ${error.message}`);
+  });
 
   return server;
 }
 
 function stopWebhookReceiver(server) {
   if (!server) {
+    updateWebhookStatus({
+      enabled: shouldEnableWebhookReceiver(),
+      listening: false,
+      port: null,
+    });
     return;
   }
 
   server.close();
 }
 
+function getWebhookReceiverStatus() {
+  return { ...webhookStatus };
+}
+
 module.exports = {
   startWebhookReceiver,
   stopWebhookReceiver,
+  getWebhookReceiverStatus,
 };

@@ -246,6 +246,12 @@ function init(options = {}) {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS runtime_heartbeats (
+      component TEXT PRIMARY KEY,
+      last_heartbeat TEXT NOT NULL,
+      metadata_json TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS event_modes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
@@ -1705,6 +1711,48 @@ function getCurrentDbPath() {
   return currentDbPath;
 }
 
+function isInitialized() {
+  return !!db;
+}
+
+function probeRuntimeWrite(component = 'readiness', metadata = null) {
+  if (!db) {
+    throw new Error('Database is not initialized');
+  }
+
+  const checkedAt = toDbTimestamp();
+  const metadataJson = metadata == null ? null : safeJsonStringify(metadata);
+
+  const writeProbe = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO runtime_heartbeats (component, last_heartbeat, metadata_json)
+      VALUES (?, ?, ?)
+      ON CONFLICT(component) DO UPDATE SET
+        last_heartbeat = excluded.last_heartbeat,
+        metadata_json = excluded.metadata_json
+    `).run(component, checkedAt, metadataJson);
+
+    return db.prepare(`
+      SELECT component, last_heartbeat, metadata_json
+      FROM runtime_heartbeats
+      WHERE component = ?
+    `).get(component);
+  });
+
+  const row = writeProbe();
+  if (!row) {
+    throw new Error(`Failed to record runtime heartbeat for ${component}`);
+  }
+
+  return {
+    ok: true,
+    component: row.component,
+    checkedAt: row.last_heartbeat,
+    dbPath: currentDbPath,
+    metadata: safeJsonParse(row.metadata_json, null),
+  };
+}
+
 /**
  * Close the database connection.
  */
@@ -1781,5 +1829,7 @@ module.exports = {
   markPapersDigested,
   getWeeklyNotified,
   getCurrentDbPath,
+  isInitialized,
+  probeRuntimeWrite,
   close,
 };

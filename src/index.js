@@ -2,15 +2,18 @@ require('dotenv').config();
 
 const { Events } = require('discord.js');
 const { createClient, login } = require('./bot/client');
-const { ensureChannels } = require('./bot/channels');
+const { CHANNEL_DEFS, ensureChannels } = require('./bot/channels');
 const { registerCommands, handleInteraction } = require('./bot/commands');
-const { scheduleAll } = require('./services/scheduler');
+const { scheduleAll, stopAll } = require('./services/scheduler');
+const { startHealthServer, stopHealthServer } = require('./services/health-server');
 const { sendStatusMessage, startDeliveryWorker, stopDeliveryWorker } = require('./services/notifier');
 const { startWebhookReceiver, stopWebhookReceiver } = require('./services/webhooks/receiver');
 const db = require('./db/database');
 const logger = require('./services/logger');
+const runtimeState = require('./services/runtime-state');
 
 let webhookServer = null;
+let healthServer = null;
 
 // ─── Adapter Imports ─────────────────────────────────────────────────────────
 const RSSAdapter = require('./adapters/rss-adapter');
@@ -244,13 +247,33 @@ async function main() {
 
   // Validate environment
   validateEnv();
+  runtimeState.setStartupState('environment', 'ready');
+
+  // Start the health server early so readiness stays red until startup completes
+  healthServer = await startHealthServer();
 
   // Initialize database
   logger.info('📁 Initializing database...');
   db.init();
+  runtimeState.setStartupState('database', 'ready', {
+    dbPath: db.getCurrentDbPath(),
+  });
 
   // Optionally start webhook receiver before the Discord client becomes ready
-  webhookServer = startWebhookReceiver();
+  try {
+    webhookServer = await startWebhookReceiver();
+    runtimeState.setStartupState('webhook', webhookServer ? 'ready' : 'disabled', webhookServer
+      ? { port: Number(process.env.WEBHOOK_PORT || 8787) }
+      : {}
+    );
+  } catch (error) {
+    logger.error('Failed to start webhook receiver:', error);
+    runtimeState.setStartupState('webhook', 'error', {
+      port: Number(process.env.WEBHOOK_PORT || 8787),
+      error,
+    });
+    webhookServer = null;
+  }
 
   // Create Discord client
   const client = createClient();
@@ -261,24 +284,62 @@ async function main() {
   // Wait for client to be ready
   client.once(Events.ClientReady, async (c) => {
     try {
+      runtimeState.setStartupState('discordLogin', 'ready', {
+        userTag: c.user.tag,
+        guildCount: c.guilds.cache.size,
+        readyAt: new Date(c.readyTimestamp || Date.now()).toISOString(),
+      });
+
       // Find the target guild
       const guild = c.guilds.cache.get(process.env.DISCORD_GUILD_ID);
       if (!guild) {
-        logger.error(`Guild ${process.env.DISCORD_GUILD_ID} not found. Is the bot invited to the server?`);
-        process.exit(1);
+        const error = new Error(`Guild ${process.env.DISCORD_GUILD_ID} not found. Is the bot invited to the server?`);
+        runtimeState.setStartupState('guild', 'error', {
+          guildId: process.env.DISCORD_GUILD_ID,
+          error,
+        });
+        throw error;
       }
 
+      runtimeState.setStartupState('guild', 'ready', {
+        guildId: guild.id,
+        guildName: guild.name,
+      });
       logger.info(`📍 Connected to guild: ${guild.name}`);
 
       // Ensure channels exist
       logger.info('📺 Setting up channels...');
-      await ensureChannels(guild);
+      const resolvedChannels = await ensureChannels(guild);
+      const requiredChannelKeys = Object.keys(CHANNEL_DEFS);
+      const missingChannelKeys = requiredChannelKeys.filter((key) => !resolvedChannels[key]);
+      const resolvedCount = requiredChannelKeys.length - missingChannelKeys.length;
+
+      if (missingChannelKeys.length > 0) {
+        const error = new Error(`Missing required channels: ${missingChannelKeys.join(', ')}`);
+        runtimeState.setStartupState('channels', 'error', {
+          requiredCount: requiredChannelKeys.length,
+          resolvedCount,
+          missingChannelKeys,
+          error,
+        });
+        throw error;
+      }
+
+      runtimeState.setStartupState('channels', 'ready', {
+        requiredCount: requiredChannelKeys.length,
+        resolvedCount,
+      });
 
       // Start background delivery worker now that channels are ready
       startDeliveryWorker();
+      runtimeState.setStartupState('deliveryWorker', 'ready');
 
       // Register slash commands
-      await registerCommands(process.env.DISCORD_TOKEN, c.user.id, process.env.DISCORD_GUILD_ID);
+      const commandRegistration = await registerCommands(process.env.DISCORD_TOKEN, c.user.id, process.env.DISCORD_GUILD_ID);
+      runtimeState.setStartupState('commands', commandRegistration.ok ? 'ready' : 'error', commandRegistration.ok
+        ? { registeredCount: commandRegistration.registeredCount }
+        : { error: commandRegistration.error }
+      );
 
       // Build and schedule all adapters
       const adapterConfigs = buildAdapterConfigs();
@@ -289,46 +350,57 @@ async function main() {
       );
       logger.info(`📡 Starting ${adapterConfigs.length} adapter(s)...`);
       scheduleAll(adapterConfigs);
+      runtimeState.setStartupState('scheduler', 'ready', {
+        adapterCount: adapterConfigs.length,
+      });
 
       // Schedule weekly digests (paper digest + news roundup)
       scheduleDigests();
+      runtimeState.setStartupState('digests', 'ready');
 
       logger.info('✅ Bot is fully operational!');
     } catch (error) {
       logger.error('Failed during bot initialization:', error);
+      runtimeState.markFatalError(error);
       process.exit(1);
     }
   });
 
   // Login
   logger.info('🔑 Logging in to Discord...');
-  await login(process.env.DISCORD_TOKEN);
+  runtimeState.setStartupState('discordLogin', 'starting');
+  try {
+    await login(process.env.DISCORD_TOKEN);
+  } catch (error) {
+    runtimeState.setStartupState('discordLogin', 'error', { error });
+    throw error;
+  }
 }
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
 
-process.on('SIGINT', () => {
-  logger.info('Received SIGINT, shutting down...');
+function shutdown(signal) {
+  logger.info(`Received ${signal}, shutting down...`);
+  runtimeState.markShutdown();
+  stopAll();
   stopDeliveryWorker();
+  stopHealthServer(healthServer);
   stopWebhookReceiver(webhookServer);
   db.close();
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', () => {
-  logger.info('Received SIGTERM, shutting down...');
-  stopDeliveryWorker();
-  stopWebhookReceiver(webhookServer);
-  db.close();
-  process.exit(0);
-});
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 process.on('unhandledRejection', (error) => {
+  runtimeState.markUnhandledRejection(error);
   logger.error('Unhandled promise rejection:', error);
 });
 
 // Run
 main().catch((error) => {
+  runtimeState.markFatalError(error);
   logger.error('Fatal error:', error);
   process.exit(1);
 });

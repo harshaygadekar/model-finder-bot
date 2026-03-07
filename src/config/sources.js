@@ -13,7 +13,7 @@ const PRIORITY = {
 
 // Route by source type for better channel separation
 const CHANNEL_MAP = {
-  rss:         'major-releases',
+  rss:         'tech-news',
   github:      'model-updates',
   huggingface: 'model-updates',
   ollama:      'model-updates',
@@ -21,7 +21,7 @@ const CHANNEL_MAP = {
   bluesky:     'community-buzz',
   'hf-papers': 'research-papers',
   arxiv:       'research-papers',
-  scrape:      'major-releases', // Direct AI lab blog scraping
+  scrape:      'tech-news',      // Direct AI lab blog scraping
   newsletter:  'tech-news',      // Newsletter/aggregator RSS feeds
   leaderboard: 'leaderboard-updates',
   hackernews:  'community-buzz',
@@ -30,8 +30,8 @@ const CHANNEL_MAP = {
   'arena-mystery': 'rumors-leaks',
   'talent':    'talent-moves',
   'api-models': 'model-updates',
-  'arena-models': 'rumors-leaks',
-  'changelog': 'major-releases',
+  'arena-models': 'leaderboard-updates',
+  'changelog': 'model-updates',
   'playground-leak': 'rumors-leaks',
 };
 

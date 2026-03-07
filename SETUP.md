@@ -367,6 +367,9 @@ pm2 restart ai-tracker  # Restart the bot
 pm2 stop ai-tracker     # Stop the bot
 pm2 delete ai-tracker   # Remove from PM2
 pm2 monit               # Real-time monitoring dashboard
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/live
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/ready
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/health
 ```
 
 ---

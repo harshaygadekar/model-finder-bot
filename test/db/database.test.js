@@ -111,3 +111,17 @@ test('database health summaries include adapter telemetry and backlog', () => {
 
   cleanupTempDir(temp.dir);
 });
+
+test('database runtime probe verifies the SQLite file is writable', () => {
+  const temp = createTempDbPath('runtime-probe');
+  db.init({ dbPath: temp.dbPath });
+
+  const probe = db.probeRuntimeWrite('readiness', { source: 'test-suite' });
+
+  assert.equal(probe.ok, true);
+  assert.equal(probe.component, 'readiness');
+  assert.equal(probe.dbPath, temp.dbPath);
+  assert.deepEqual(probe.metadata, { source: 'test-suite' });
+
+  cleanupTempDir(temp.dir);
+});

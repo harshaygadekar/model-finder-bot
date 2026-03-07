@@ -80,8 +80,17 @@ async function registerCommands(token, clientId, guildId) {
       body: commands.map((c) => c.toJSON()),
     });
     logger.info('✅ Slash commands registered');
+    return {
+      ok: true,
+      registeredCount: commands.length,
+    };
   } catch (error) {
     logger.error('Failed to register slash commands:', error);
+    return {
+      ok: false,
+      registeredCount: 0,
+      error: error.message,
+    };
   }
 }
 

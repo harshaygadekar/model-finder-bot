@@ -12,37 +12,14 @@ const DELIVERY_WORKER_ID = `delivery-worker-${process.pid}`;
 const DELIVERY_POLL_INTERVAL_MS = 1000;
 const DELIVERY_MAX_ATTEMPTS = 4;
 const DELIVERY_RETRY_BASE_MS = 5000;
-const OFFICIAL_SOURCE_TYPES = new Set(['rss', 'scrape', 'github', 'huggingface', 'ollama', 'changelog']);
-const OFFICIAL_RELEASE_PATTERN = /\b(release|released|launch|launched|announc|available|official)\b/i;
+const DELIVERY_STUCK_THRESHOLD_MS = 5 * 60 * 1000;
 
 let deliveryWorkerTimer = null;
 let deliveryWorkerRunning = false;
-
-const RUMOR_KEYWORDS = [
-  'leak', 'rumor', 'anonymous', 'insider', 'unreleased', 
-  'strawberry', 'orion', 'q-star',
-  'mystery-model', 'model-leak', 'sdk-leak',
-  'api-live',
-];
-
-function isRumor(item) {
-  if (item.classification?.label) {
-    return item.classification.label === 'rumor_or_leak';
-  }
-
-  const text = `${item.title} ${item.description || ''} ${item.tags?.join(' ') || ''}`.toLowerCase();
-  const hasRumorKeyword = RUMOR_KEYWORDS.some((keyword) => text.includes(keyword));
-  if (!hasRumorKeyword) {
-    return false;
-  }
-
-  const isOfficialSource = item.priority <= 1 && OFFICIAL_SOURCE_TYPES.has(item.sourceType);
-  if (isOfficialSource && OFFICIAL_RELEASE_PATTERN.test(text)) {
-    return false;
-  }
-
-  return true;
-}
+let deliveryWorkerStartedAt = null;
+let lastPollStartedAt = null;
+let lastPollCompletedAt = null;
+let lastPollError = null;
 
 /**
  * Check if an item is fresh enough to notify about.
@@ -201,6 +178,9 @@ function startDeliveryWorker() {
     return;
   }
 
+  deliveryWorkerStartedAt = new Date().toISOString();
+  lastPollError = null;
+
   const releasedJobs = db.releaseStaleDeliveryJobs();
   if (releasedJobs > 0) {
     logger.warn(`[Notifier] Requeued ${releasedJobs} stale delivery job(s) on startup`);
@@ -226,6 +206,8 @@ function stopDeliveryWorker() {
 
   clearInterval(deliveryWorkerTimer);
   deliveryWorkerTimer = null;
+  deliveryWorkerRunning = false;
+  lastPollCompletedAt = new Date().toISOString();
   logger.info('[Notifier] Delivery worker stopped');
 }
 
@@ -235,6 +217,8 @@ async function pollDeliveryQueue() {
   }
 
   deliveryWorkerRunning = true;
+  lastPollStartedAt = new Date().toISOString();
+  lastPollError = null;
 
   try {
     while (true) {
@@ -245,7 +229,14 @@ async function pollDeliveryQueue() {
 
       await processDeliveryJob(job);
     }
+  } catch (error) {
+    lastPollError = {
+      message: error.message || String(error),
+      updatedAt: new Date().toISOString(),
+    };
+    throw error;
   } finally {
+    lastPollCompletedAt = new Date().toISOString();
     deliveryWorkerRunning = false;
   }
 }
@@ -307,34 +298,38 @@ async function sendAlertPayload(payload) {
   const deliveryDecision = computeDeliveryDecision(deliverableItem);
   const channelKey = deliveryDecision.channelKey || CHANNEL_MAP[deliverableItem.sourceType] || 'tech-news';
   const channel = getChannel(channelKey);
-  const rumorChannel = getChannel('rumors-leaks');
-  const rumor = deliveryDecision.channelKey === 'rumors-leaks' || isRumor(deliverableItem);
+  const secondaryChannelKeys = [...new Set((deliveryDecision.secondaryChannelKeys || []).filter((key) => key && key !== channelKey))];
 
-  if (!channel && (!rumor || !rumorChannel)) {
-    throw new Error(`No destination channels found for ${deliverableItem.title}`);
+  if (!channel) {
+    throw new Error(`No destination channel found for ${deliverableItem.title}`);
   }
 
   const message = buildNotificationEmbed(deliverableItem);
-  let sentMessage;
-  let destinationKey;
-  const breakingBanner = deliveryDecision.breakingCandidate && !rumor
+  const breakingBanner = deliveryDecision.breakingCandidate && channelKey !== 'rumors-leaks'
     ? '🚨 **BREAKING MODEL SIGNAL** 🚨'
     : null;
 
-  if (rumor && rumorChannel) {
-    sentMessage = await rumorChannel.send({
-      content: '🚨 **RUMOR/LEAK DETECTED** 🚨',
-      ...message,
-    });
-    destinationKey = 'rumors-leaks';
-    logger.info(`[Notifier] 🔮 Sent RUMOR to #rumors-leaks: "${deliverableItem.title.substring(0, 60)}..."`);
-  } else {
-    sentMessage = await channel.send(breakingBanner ? { content: breakingBanner, ...message } : message);
-    destinationKey = channelKey;
-    logger.info(`[Notifier] 📨 Sent to #${channelKey}: "${deliverableItem.title.substring(0, 60)}..."`);
+  const primaryPayload = channelKey === 'rumors-leaks'
+    ? { content: '🚨 **RUMOR/LEAK DETECTED** 🚨', ...message }
+    : (breakingBanner ? { content: breakingBanner, ...message } : message);
+  const sentMessage = await channel.send(primaryPayload);
+  logger.info(`[Notifier] 📨 Sent to #${channelKey}: "${deliverableItem.title.substring(0, 60)}..."`);
+
+  for (const secondaryChannelKey of secondaryChannelKeys) {
+    const secondaryChannel = getChannel(secondaryChannelKey);
+    if (!secondaryChannel) {
+      logger.warn(`[Notifier] Secondary channel ${secondaryChannelKey} unavailable for "${deliverableItem.title}"`);
+      continue;
+    }
+
+    const secondaryPayload = secondaryChannelKey === 'major-events'
+      ? { content: '🎪 **EVENT TRACKER MIRROR**', ...message }
+      : message;
+    await secondaryChannel.send(secondaryPayload);
+    logger.info(`[Notifier] 🔁 Mirrored to #${secondaryChannelKey}: "${deliverableItem.title.substring(0, 60)}..."`);
   }
 
-  const eventMirrorPayload = rumor
+  const eventMirrorPayload = channelKey === 'rumors-leaks'
     ? { content: '🎪 **EVENT MODE MIRROR**', ...message }
     : message;
   await mirrorToEventThread(deliverableItem, eventMirrorPayload).catch((error) => {
@@ -344,7 +339,7 @@ async function sendAlertPayload(payload) {
   await sleep(500);
 
   return {
-    channelKey: destinationKey,
+    channelKey,
     messageId: sentMessage?.id || null,
   };
 }
@@ -369,10 +364,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getDeliveryWorkerStatus(now = Date.now()) {
+  const lastPollStartedMs = lastPollStartedAt ? new Date(lastPollStartedAt).getTime() : null;
+  const currentPollAgeMs = deliveryWorkerRunning && Number.isFinite(lastPollStartedMs)
+    ? Math.max(0, now - lastPollStartedMs)
+    : null;
+
+  return {
+    workerId: DELIVERY_WORKER_ID,
+    startedAt: deliveryWorkerStartedAt,
+    timerActive: !!deliveryWorkerTimer,
+    running: deliveryWorkerRunning,
+    pollIntervalMs: DELIVERY_POLL_INTERVAL_MS,
+    stuckThresholdMs: DELIVERY_STUCK_THRESHOLD_MS,
+    lastPollStartedAt,
+    lastPollCompletedAt,
+    lastError: lastPollError,
+    currentPollAgeMs,
+    healthy: !!deliveryWorkerTimer
+      && (!deliveryWorkerRunning || (currentPollAgeMs != null && currentPollAgeMs <= DELIVERY_STUCK_THRESHOLD_MS)),
+  };
+}
+
 module.exports = {
   notifyItems,
   sendStatusMessage,
   startDeliveryWorker,
   stopDeliveryWorker,
+  getDeliveryWorkerStatus,
   pollDeliveryQueue,
 };

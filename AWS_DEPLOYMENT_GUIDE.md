@@ -357,6 +357,9 @@ docker compose ps  # Should show container running
 pm2 status
 pm2 logs ai-tracker --lines 50
 pm2 monit  # Real-time dashboard
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/live
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/ready
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/health
 ```
 
 **For Docker deployment:**
@@ -364,7 +367,12 @@ pm2 monit  # Real-time dashboard
 docker compose ps
 docker compose logs --tail 50
 docker stats ai-model-tracker  # Resource usage
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/live
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/ready
+curl http://127.0.0.1:${HEALTH_PORT:-8788}/health
 ```
+
+`/live` confirms the process is up, `/ready` confirms the bot is actually operational, and `/health` returns detailed JSON diagnostics.
 
 ### 6.3 Verify Database
 

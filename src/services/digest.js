@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { EmbedBuilder } = require('discord.js');
 const { getChannel } = require('../bot/channels');
+const { EVENT_SIGNAL_PATTERN } = require('../config/channel-policies');
 const db = require('../db/database');
 const logger = require('./logger');
 const { CATEGORIES } = require('../adapters/arxiv-adapter');
@@ -47,6 +48,54 @@ async function sendBreakingDigest() {
   await channel.send({ embeds: [embed] });
   db.markEventDigestDispatched(events.map((event) => event.id), 'breaking');
   logger.info(`[Digest] ✅ Breaking digest sent with ${events.length} event(s)`);
+}
+
+async function sendMajorEventRecap() {
+  logger.info('[Digest] Building weekly major-events recap...');
+  const channel = getChannel('major-events');
+  if (!channel) {
+    logger.warn('[Digest] #major-events channel not found, skipping weekly recap');
+    return;
+  }
+
+  const candidates = db.getRecentDigestCandidateEvents({
+    hours: 24 * 7,
+    minConfidence: 0.7,
+    limit: 10,
+    digestType: 'major-events-weekly',
+  });
+  const events = candidates.filter((event) => {
+    const text = `${event.title || ''} ${event.summary || ''}`;
+    return EVENT_SIGNAL_PATTERN.test(text)
+      || ['official_release', 'api_availability', 'model_update'].includes(event.event_type);
+  });
+
+  if (events.length === 0) {
+    logger.info('[Digest] No recent major events or planned launch windows to recap');
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf59e0b)
+    .setTitle('🎪 Weekly Major Events Recap')
+    .setDescription(`${events.length} major event${events.length > 1 ? 's' : ''} from the last 7 days`)
+    .setTimestamp()
+    .setFooter({ text: 'Launch windows, keynotes, and major release moments' });
+
+  for (const event of events.slice(0, 8)) {
+    const summary = event.summary || `${event.event_type.replace(/_/g, ' ')} • confidence ${(Number(event.confidence_score) * 100).toFixed(0)}%`;
+    const line = event.representative_url
+      ? `[Open source](${event.representative_url})`
+      : 'No source link captured';
+    embed.addFields({
+      name: `${event.title.substring(0, 256)} • ${(Number(event.confidence_score) * 100).toFixed(0)}%`,
+      value: `${summary.substring(0, 220)}\n${line} • ${event.distinct_sources} source${event.distinct_sources > 1 ? 's' : ''}`,
+    });
+  }
+
+  await channel.send({ embeds: [embed] });
+  db.markEventDigestDispatched(events.map((event) => event.id), 'major-events-weekly');
+  logger.info(`[Digest] ✅ Weekly major-events recap sent with ${events.length} event(s)`);
 }
 
 // ─── Paper Digest ─────────────────────────────────────────────────────────────
@@ -204,12 +253,17 @@ function scheduleDigests() {
     sendPaperDigest().catch((e) => logger.error('[Digest] Paper digest failed:', e));
   }, { timezone: 'Asia/Kolkata' });
 
+  // Sunday 10:10 AM — recap major events, launch windows, and event-linked releases
+  cron.schedule('10 10 * * 0', () => {
+    sendMajorEventRecap().catch((e) => logger.error('[Digest] Major event recap failed:', e));
+  }, { timezone: 'Asia/Kolkata' });
+
   // Sunday 10:15 AM — weekly news roundup
   cron.schedule('15 10 * * 0', () => {
     sendWeeklyRoundup().catch((e) => logger.error('[Digest] Roundup failed:', e));
   }, { timezone: 'Asia/Kolkata' });
 
-  logger.info('[Digest] 📅 Scheduled: hourly breaking digest + weekly paper digest + roundup');
+  logger.info('[Digest] 📅 Scheduled: hourly breaking digest + weekly paper digest + major-events recap + roundup');
 }
 
-module.exports = { scheduleDigests, sendBreakingDigest, sendPaperDigest, sendWeeklyRoundup };
+module.exports = { scheduleDigests, sendBreakingDigest, sendMajorEventRecap, sendPaperDigest, sendWeeklyRoundup };

@@ -1,9 +1,32 @@
 node_modules/
+.venv/
+
+# Local environment and secrets
+.env
+.env.*
+auth.txt
+
+# Runtime data and logs
 data/
 *.db
 *.db-wal
 *.db-shm
-.env
-auth.txt
 *.log
+
+# VCS and editor noise
+.git/
+.gitignore
+.dockerignore
 .DS_Store
+
+# Dev-only files not needed in the production image
+test/
+scripts/
+featrues-addition/
+AWS_DEPLOYMENT_GUIDE.md
+BOT_IMPROVEMENT_ANALYSIS.md
+SETUP.md
+groq-docs.md
+infra-plan.md
+pending.md
+docker-compose.yml

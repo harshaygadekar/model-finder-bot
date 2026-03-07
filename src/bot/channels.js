@@ -3,16 +3,16 @@ const logger = require('../services/logger');
 
 // Channel definitions with their Discord display names
 const CHANNEL_DEFS = {
-  'major-releases':      { name: '🔴-major-releases',      topic: 'Official announcements and blog posts from AI labs' },
-  'model-updates':       { name: '📦-model-updates',       topic: 'New models on HuggingFace, GitHub releases, and Ollama' },
-  'tech-news':           { name: '📰-tech-news',            topic: 'AI coverage from tech news outlets and newsletters' },
-  'community-buzz':      { name: '💬-community-buzz',       topic: 'Trending posts from Reddit and Bluesky AI community' },
-  'leaderboard-updates': { name: '📊-leaderboard-updates',  topic: 'Benchmark changes and new leaderboard entries' },
+  'major-releases':      { name: '🔴-major-releases',      topic: 'Major official model launches, flagship upgrades, and notable tech product, software, hardware, or robotics releases' },
+  'model-updates':       { name: '📦-model-updates',       topic: 'Meaningful LLM and AI model changes that matter, but are not top-tier major-release alerts' },
+  'tech-news':           { name: '📰-tech-news',            topic: 'Broader tech company news, announcements, blogs, reports, and articles across AI and technology' },
+  'community-buzz':      { name: '💬-community-buzz',       topic: 'Forum, social, and open-source chatter surfacing around AI models, companies, and tech developments' },
+  'leaderboard-updates': { name: '📊-leaderboard-updates',  topic: 'Arena, eval, benchmark, and leaderboard movement only' },
   'research-papers':     { name: '📄-research-papers',      topic: 'Weekly curated digest of top AI/ML research papers' },
   'weekly-digest':       { name: '📋-weekly-digest',        topic: 'Sunday roundup of everything that happened in AI this week' },
-  'major-events':        { name: '🎪-major-events',         topic: 'Live event tracking threads for major conferences, launch windows, and special monitoring mode' },
-  'rumors-leaks':        { name: '🔮-rumors-leaks',         topic: 'Unverified leaks, rumors, and insider whispers of upcoming models' },
-  'china-ai':            { name: '🐉-china-ai',             topic: 'Chinese AI ecosystem updates (DeepSeek, Qwen, GLM, Yi, MiniMax)' },
+  'major-events':        { name: '🎪-major-events',         topic: 'Planned event announcements, live event-related coverage, recap digests, and special monitoring mode threads' },
+  'rumors-leaks':        { name: '🔮-rumors-leaks',         topic: 'Unverified leaks, rumors, low-confidence signals, and insider whispers around upcoming models and products' },
+  'china-ai':            { name: '🐉-china-ai',             topic: 'China-focused AI and tech landscape updates when no more specific channel is the better primary home' },
   'talent-moves':        { name: '🧠-talent-moves',         topic: 'AI researcher movement alerts and affiliation changes' },
   'bot-status':          { name: '🤖-bot-status',           topic: 'Bot health, source status, and operational alerts' },
 };

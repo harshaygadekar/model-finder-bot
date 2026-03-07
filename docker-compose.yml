@@ -13,13 +13,22 @@ services:
     volumes:
       # Persist SQLite database across container restarts
       - ./data:/app/data
-    # Health check to verify bot is running
+    ports:
+      # Expose the health endpoint only on the EC2 host loopback interface
+      - "127.0.0.1:${HEALTH_PORT:-8788}:${HEALTH_PORT:-8788}"
+    # Health check to verify the bot is actually ready
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(0)"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const port = process.env.HEALTH_PORT || 8788; fetch('http://127.0.0.1:' + port + '/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1));"
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 60s
     logging:
       driver: json-file
       options:
